@@ -1,10 +1,30 @@
 # Building
 
-> This repo is a **staging area of patches + source**, not a turnkey tree. These are the moving parts
-> and the recipe used to produce the working artifacts. Expect to apply `patches/` onto pinned
-> upstream checkouts (see `UPSTREAM.md`) — the exact upstream tags are noted per patch.
+> This tree is **self-contained and buildable from a clean clone** — the relay workspace (`relay/`),
+> its forked deps (`vendor/`), and the HermitOS kernel/std fork (`hermit-rs/`) are vendored with
+> relative paths. `scripts/build-hermit.sh` cross-compiles the kernel + std + relay into one static
+> unikernel. (The `patches/` set is the *upstreaming* view of the same changes — see `UPSTREAM.md`.)
 
-## Toolchain
+## Prerequisites (fresh Ubuntu)
+
+```sh
+sudo apt update && sudo apt install -y build-essential pkg-config libssl-dev git curl
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+rustup toolchain install nightly --profile minimal -c rust-src
+```
+Needs **~4 GB+ RAM** and **~15 GB disk**. `-Zbuild-std` requires the `nightly` toolchain **and** the
+`rust-src` component (both above).
+
+## Build
+
+```sh
+git clone https://github.com/erikherz/hermit-moq.git
+cd hermit-moq
+scripts/build-hermit.sh      # ~10 min -> relay/target/x86_64-unknown-hermit/release/moq-relay (~32 MB)
+```
+
+## Toolchain (what the script does)
 
 - Rust **nightly** with `-Zbuild-std` (the `x86_64-unknown-hermit` std is built from source).
 - Target: `x86_64-unknown-hermit`.
@@ -14,12 +34,12 @@
 
 ```sh
 RUSTFLAGS="-C target-feature=+crt-static -C relocation-model=pic --cfg tokio_unstable" \
-cargo +nightly build --release --target x86_64-unknown-hermit \
-      -Zbuild-std=std,panic_abort
+cargo +nightly build --release --target x86_64-unknown-hermit -Zbuild-std=std,panic_abort \
+      -p moq-relay --no-default-features --features quinn,iroh
 ```
 
-`relay/build_hermit.sh` is the exact script used for the relay unikernel
-(`moq-relay --no-default-features --features quinn,iroh`).
+`scripts/build-hermit.sh` runs exactly the above (`docs/reference/build_hermit.sh` is the original
+box-side script kept for provenance).
 
 ## Kernel
 

@@ -49,20 +49,35 @@ to upstream each change back to its origin project (see [`UPSTREAM.md`](UPSTREAM
 
 ## Building
 
-This tree is **self-contained** — the relay workspace, its forked deps (`vendor/`), and the HermitOS
-kernel/std fork (`hermit-rs/`) are vendored with relative paths, so one cross-compile builds the
-kernel + std + relay into a single static unikernel:
+**Prerequisites — from a fresh Ubuntu box** (the exact, verified sequence):
 
 ```sh
-scripts/build-hermit.sh      # nightly + rust-src; x86_64-unknown-hermit via -Zbuild-std
+sudo apt update && sudo apt install -y build-essential pkg-config libssl-dev git curl
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+rustup toolchain install nightly --profile minimal -c rust-src   # -Zbuild-std needs nightly + rust-src
 ```
+
+**Build the unikernel:**
+
+```sh
+git clone https://github.com/erikherz/hermit-moq.git
+cd hermit-moq
+scripts/build-hermit.sh
+```
+
+This tree is **self-contained** — the relay workspace, its forked deps (`vendor/`), and the HermitOS
+kernel/std fork (`hermit-rs/`) are vendored with relative paths, so one cross-compile builds the kernel
++ std + relay into a single static unikernel at `relay/target/x86_64-unknown-hermit/release/moq-relay`
+(~32 MB, ~10 min). The long silent stretch mid-build is the hermit kernel's `build.rs` compiling
+libhermit via a nested cargo — normal, not a hang.
 
 Then boot it under **stock uhyve ≥ 0.9.1** — [`docs/BUILD.md`](docs/BUILD.md) has the full recipe
 (RUSTFLAGS, the uhyve boot command, the `HERMIT_*` / `MOQ_IROH_*` env). `UPSTREAM.md` maps each
 vendored change back to the upstream tag it derives from.
 
-> **Heads-up:** the folded-in tree has not been compile-verified in this exact layout yet — see
-> [`REVIEW-NEEDED.md`](REVIEW-NEEDED.md) (mechanical path rewrites + a license note on the `ring` fork).
+> **Verified:** builds *and* boots from a clean clone — a 32 MB `x86_64-unknown-hermit` unikernel that
+> comes up with iroh + Mainline-DHT discovery and `moq-relay listening on :443`.
 
 ## How this fits — the wider ecosystem
 
