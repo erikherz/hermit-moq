@@ -1,0 +1,25 @@
+diff -ruN '--exclude=target' iroh-dns-1.0.2/Cargo.toml /root/iroh-spike/vendor/iroh-dns-hermit/Cargo.toml
+--- iroh-dns-1.0.2/Cargo.toml	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/iroh-dns-hermit/Cargo.toml	2026-07-12 23:46:14.923962813 +0000
+@@ -143,3 +143,5 @@
+     "cfg(iroh_loom)",
+     "cfg(skip_patchbay)",
+ ]
++
+diff -ruN '--exclude=target' iroh-dns-1.0.2/src/dns.rs /root/iroh-spike/vendor/iroh-dns-hermit/src/dns.rs
+--- iroh-dns-1.0.2/src/dns.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/iroh-dns-hermit/src/dns.rs	2026-07-12 23:46:14.933892283 +0000
+@@ -770,7 +770,12 @@
+     fn system_config() -> Result<(ResolverConfig, ResolverOpts), hickory_resolver::net::NetError> {
+         #[cfg(target_os = "android")]
+         let (system_config, options) = crate::android::read_system_conf()?;
+-        #[cfg(not(target_os = "android"))]
++        #[cfg(target_os = "hermit")]
++        let (system_config, options) = (
++            hickory_resolver::config::ResolverConfig::default(),
++            hickory_resolver::config::ResolverOpts::default(),
++        );
++        #[cfg(not(any(target_os = "android", target_os = "hermit")))]
+         let (system_config, options) = hickory_resolver::system_conf::read_system_conf()?;
+ 
+         // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately

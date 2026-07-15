@@ -1,0 +1,163 @@
+use alloc::borrow::Cow;
+use core::fmt;
+use core::sync::atomic::{AtomicBool, Ordering};
+use core::time::Duration;
+
+use anstyle::AnsiColor;
+use env_filter::Builder;
+use hermit_sync::OnceCell;
+use log::{Level, LevelFilter, Metadata, Record};
+
+use crate::arch::kernel::{core_local, processor};
+
+pub static KERNEL_LOGGER: KernelLogger = KernelLogger::new();
+
+/// Data structure to filter kernel messages
+pub struct KernelLogger {
+	time: AtomicBool,
+	filter: OnceCell<env_filter::Filter>,
+}
+
+impl KernelLogger {
+	pub const fn new() -> Self {
+		Self {
+			time: AtomicBool::new(false),
+			filter: OnceCell::new(),
+		}
+	}
+
+	pub fn time(&self) -> bool {
+		self.time.load(Ordering::Relaxed)
+	}
+
+	pub fn set_time(&self, time: bool) {
+		self.time.store(time, Ordering::Relaxed);
+	}
+}
+
+impl log::Log for KernelLogger {
+	fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+		self.filter.get().unwrap().enabled(metadata)
+	}
+
+	fn flush(&self) {
+		// nothing to do
+	}
+
+	fn log(&self, record: &Record<'_>) {
+		if !self.filter.get().unwrap().matches(record) {
+			return;
+		}
+
+		let time = self
+			.time()
+			.then(|| Duration::from_micros(processor::get_timer_ticks()));
+		let format_time = LogTime(time);
+		let core_id = core_local::core_id();
+		let level = ColorLevel(record.level());
+
+		let target = record.target();
+		let (crate_, modules) = target.split_once("::").unwrap_or((target, ""));
+		let (_modules, module) = modules.rsplit_once("::").unwrap_or(("", modules));
+		let target = if !module.is_empty() && crate_ == "hermit" {
+			module
+		} else {
+			crate_
+		};
+		let format_target = format_args!(" {target:<10}");
+
+		let args = record.args();
+		println!("[{format_time}][{core_id}][{level}{format_target}] {args}");
+	}
+}
+
+struct LogTime(Option<Duration>);
+
+impl fmt::Display for LogTime {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		const TIME_SEC_WIDTH: usize = 5;
+		const TIME_SUBSEC_WIDTH: usize = 6;
+
+		if let Some(time) = self.0 {
+			let seconds = time.as_secs();
+			let microseconds = time.subsec_micros();
+			write!(
+				f,
+				"{seconds:TIME_SEC_WIDTH$}.{microseconds:0TIME_SUBSEC_WIDTH$}"
+			)
+		} else {
+			write!(f, "{:1$}", "", TIME_SEC_WIDTH + 1 + TIME_SUBSEC_WIDTH)
+		}
+	}
+}
+
+struct ColorLevel(Level);
+
+impl fmt::Display for ColorLevel {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let level = self.0;
+
+		if no_color() {
+			write!(f, "{level:<5}")
+		} else {
+			let color = match level {
+				Level::Trace => AnsiColor::Magenta,
+				Level::Debug => AnsiColor::Blue,
+				Level::Info => AnsiColor::Green,
+				Level::Warn => AnsiColor::Yellow,
+				Level::Error => AnsiColor::Red,
+			};
+
+			let style = anstyle::Style::new().fg_color(Some(color.into()));
+			write!(f, "{style}{level:<5}{style:#}")
+		}
+	}
+}
+
+fn no_color() -> bool {
+	hermit_var!("NO_COLOR").is_some_and(|val| !val.is_empty())
+}
+
+pub unsafe fn init() {
+	let filter = hermit_var!("HERMIT_LOG_LEVEL_FILTER").unwrap_or(Cow::from("info"));
+
+	let mut builder = Builder::new();
+	// The default. It may get overwritten by the parsed filter if it has a global level.
+	builder.filter_level(LevelFilter::Info);
+	if let Err(err) = builder.try_parse(&filter) {
+		println!("{err}");
+	}
+	let filter = builder.build();
+
+	log::set_max_level(filter.filter());
+	KERNEL_LOGGER.filter.set(filter).unwrap();
+	log::set_logger(&KERNEL_LOGGER).expect("Can't initialize logger");
+}
+
+#[cfg_attr(target_arch = "riscv64", allow(unused_macros))]
+macro_rules! infoheader {
+	// This should work on paper, but it's currently not supported :(
+	// Refer to https://github.com/rust-lang/rust/issues/46569
+	/*($($arg:tt)+) => ({
+		info!("");
+		info!("{:=^70}", format_args!($($arg)+));
+	});*/
+	($str:expr) => {{
+		::log::info!("");
+		::log::info!("{:=^70}", $str);
+	}};
+}
+
+#[cfg_attr(target_arch = "riscv64", allow(unused_macros))]
+#[clippy::format_args]
+macro_rules! infoentry {
+	($str:expr, $($arg:tt)+) => (::log::info!("{:25}{}", concat!($str, ":"), format_args!($($arg)+)));
+}
+
+#[cfg_attr(target_arch = "riscv64", allow(unused_macros))]
+macro_rules! infofooter {
+	() => {{
+		::log::info!("{:=^70}", '=');
+		::log::info!("");
+	}};
+}

@@ -1,0 +1,324 @@
+//! The Hermit kernel.
+//!
+//! This _library operating system_ (libOS) compiles to a static library
+//! (libhermit.a) that applications can link against to create a _Unikernel_.
+//!
+//! The API documented here does not matter to such an application.
+//! Such an application would use it's languages standard library which
+//! internally calls this kernel's system call functions ([`syscalls`]).
+//!
+//! # Using Hermit
+//!
+//! To run a Rust application with Hermit, see [hermit-rs].
+//!
+//! To run a C or C++ application with Hermit, see [hermit-c].
+//!
+//! # Building the kernel manually
+//!
+//! You can build the kernel with default features for x86-64 like this:
+//!
+//! ```sh
+//! cargo xtask build --arch x86_64
+//! ```
+//!
+//! For more information, run:
+//!
+//! ```
+//! cargo xtask build --help
+//! ```
+//!
+//! # Features
+//!
+#![cfg_attr(
+	not(feature = "document-features"),
+	doc = "Activate the `document-features` Cargo feature to see feature docs here."
+)]
+#![cfg_attr(feature = "document-features", doc = document_features::document_features!())]
+//!
+//! [hermit-rs]: https://github.com/hermit-os/hermit-rs
+//! [hermit-c]: https://github.com/hermit-os/hermit-c
+
+#![allow(clippy::missing_safety_doc)]
+#![cfg_attr(
+	any(target_arch = "aarch64", target_arch = "riscv64"),
+	allow(incomplete_features)
+)]
+#![cfg_attr(target_arch = "x86_64", feature(abi_x86_interrupt))]
+#![feature(allocator_api)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![cfg_attr(
+	all(
+		not(any(feature = "common-os", feature = "nostd")),
+		not(target_arch = "riscv64"),
+	),
+	feature(linkage)
+)]
+#![feature(linked_list_cursors)]
+#![feature(never_type)]
+#![cfg_attr(
+	any(target_arch = "aarch64", target_arch = "riscv64"),
+	feature(specialization)
+)]
+#![cfg_attr(
+	all(
+		not(any(feature = "common-os", feature = "nostd")),
+		not(target_arch = "riscv64"),
+	),
+	feature(thread_local)
+)]
+#![cfg_attr(target_os = "none", no_std)]
+#![cfg_attr(target_os = "none", feature(custom_test_frameworks))]
+#![cfg_attr(all(target_os = "none", test), test_runner(crate::test_runner))]
+#![cfg_attr(
+	all(target_os = "none", test),
+	reexport_test_harness_main = "test_main"
+)]
+#![cfg_attr(all(target_os = "none", test), no_main)]
+// FIXME: move this to `Cargo.toml` once stable
+#![feature(strict_provenance_lints)]
+#![warn(implicit_provenance_casts)]
+
+// EXTERNAL CRATES
+#[macro_use]
+extern crate alloc;
+#[macro_use]
+extern crate bitflags;
+#[macro_use]
+extern crate log;
+#[cfg(not(target_os = "none"))]
+#[macro_use]
+extern crate std;
+
+#[cfg(feature = "smp")]
+use core::hint::spin_loop;
+#[cfg(feature = "smp")]
+use core::sync::atomic::{AtomicU32, Ordering};
+
+use self::arch::kernel;
+use self::arch::kernel::core_local::{core_id, core_scheduler};
+use self::arch::kernel::interrupts;
+use crate::scheduler::{PerCoreScheduler, PerCoreSchedulerExt};
+
+#[macro_use]
+mod macros;
+
+#[macro_use]
+mod logging;
+
+pub mod arch;
+#[cfg(all(feature = "common-os", target_arch = "x86_64"))]
+pub mod common_os;
+pub mod config;
+pub mod console;
+mod drivers;
+mod entropy;
+mod env;
+pub mod errno;
+mod executor;
+pub mod fd;
+pub mod fs;
+mod init_buf;
+mod init_cell;
+pub mod io;
+pub mod mm;
+pub mod scheduler;
+#[cfg(feature = "shell")]
+mod shell;
+mod synch;
+pub mod syscalls;
+pub mod time;
+#[cfg(feature = "uhyve")]
+mod uhyve;
+
+mod built_info {
+	include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
+hermit_entry::define_abi_tag!();
+
+#[cfg(target_os = "none")]
+hermit_entry::define_entry_version!();
+
+#[cfg(test)]
+#[cfg(target_os = "none")]
+#[unsafe(no_mangle)]
+extern "C" fn runtime_entry(_argc: i32, _argv: *const *const u8, _env: *const *const u8) -> ! {
+	println!("Executing hermit unittests. Any arguments are dropped");
+	test_main();
+	core_scheduler().exit(0)
+}
+
+//https://github.com/rust-lang/rust/issues/50297#issuecomment-524180479
+#[cfg(test)]
+pub fn test_runner(tests: &[&dyn Fn()]) {
+	println!("Running {} tests", tests.len());
+	for test in tests {
+		test();
+	}
+	core_scheduler().exit(0)
+}
+
+#[cfg(target_os = "none")]
+#[test_case]
+fn trivial_test() {
+	println!("Test test test");
+	panic!("Test called");
+}
+
+/// Entry point of a kernel thread, which initialize the libos
+#[cfg(target_os = "none")]
+extern "C" fn initd(_arg: usize) {
+	unsafe extern "C" {
+		#[cfg(all(not(test), not(any(feature = "nostd", feature = "common-os"))))]
+		fn runtime_entry(argc: i32, argv: *const *const u8, env: *const *const u8) -> !;
+		#[cfg(all(not(test), any(feature = "nostd", feature = "common-os")))]
+		fn main(argc: i32, argv: *const *const u8, env: *const *const u8);
+	}
+
+	if env::is_uhyve() {
+		info!("Hermit is running on uhyve!");
+	} else {
+		info!("Hermit is running on common system!");
+	}
+
+	// Initialize Drivers
+	drivers::init();
+	// The filesystem needs to be initialized before network to allow writing packet captures to a file.
+	fs::init();
+	executor::init();
+
+	syscalls::init();
+	#[cfg(feature = "shell")]
+	shell::init();
+
+	// Get the application arguments and environment variables.
+	#[cfg(not(test))]
+	let (argc, argv, environ) = syscalls::get_application_parameters();
+
+	// give the IP thread time to initialize the network interface
+	core_scheduler().reschedule();
+
+	if cfg!(feature = "warn-prebuilt") {
+		warn!("This is a prebuilt Hermit kernel.");
+		warn!("For non-default device drivers and features, consider building a custom kernel.");
+	}
+
+	info!("Jumping into application");
+
+	#[cfg(not(test))]
+	unsafe {
+		// And finally start the application.
+		#[cfg(all(not(test), not(any(feature = "nostd", feature = "common-os"))))]
+		runtime_entry(argc, argv, environ);
+		#[cfg(all(not(test), any(feature = "nostd", feature = "common-os")))]
+		main(argc, argv, environ);
+	}
+	#[cfg(test)]
+	test_main();
+}
+
+#[cfg(feature = "smp")]
+fn synch_all_cores() {
+	static CORE_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+	CORE_COUNTER.fetch_add(1, Ordering::SeqCst);
+
+	let possible_cpus = kernel::get_possible_cpus();
+	while CORE_COUNTER.load(Ordering::SeqCst) != possible_cpus {
+		spin_loop();
+	}
+}
+
+/// Entry Point of Hermit for the Boot Processor
+#[cfg(target_os = "none")]
+fn boot_processor_main() -> ! {
+	use crate::config::USER_STACK_SIZE;
+
+	// Initialize the kernel and hardware.
+	mm::claim_initial_heap();
+	hermit_sync::Lazy::force(&console::CONSOLE);
+	env::init();
+	unsafe {
+		logging::init();
+	}
+
+	info!("Welcome to Hermit {}", env!("CARGO_PKG_VERSION"));
+	if let Some(git_version) = built_info::GIT_VERSION {
+		let dirty = if built_info::GIT_DIRTY == Some(true) {
+			" (dirty)"
+		} else {
+			""
+		};
+
+		let opt_level = if built_info::OPT_LEVEL == "3" {
+			format_args!("")
+		} else {
+			format_args!(" (opt-level={})", built_info::OPT_LEVEL)
+		};
+
+		info!("Git version: {git_version}{dirty}{opt_level}");
+	}
+	let arch = built_info::TARGET.split_once('-').unwrap().0;
+	info!("Architecture: {arch}");
+	info!("Enabled features: {}", built_info::FEATURES_LOWERCASE_STR);
+	info!("Built on {}", built_info::BUILT_TIME_UTC);
+
+	info!("Executable start: {:p}", elf_symbols::executable_start());
+	info!("ELF header:       {:p}", elf_symbols::elf_header());
+	info!("Text segment end: {:p}", elf_symbols::text_end());
+	info!("Data segment end: {:p}", elf_symbols::data_end());
+	info!("Executable end:   {:p}", elf_symbols::executable_end());
+
+	if let Some(fdt) = env::fdt() {
+		info!("FDT:\n{fdt:#?}");
+	}
+
+	kernel::boot_processor_init();
+
+	#[cfg(not(target_arch = "riscv64"))]
+	scheduler::add_current_core();
+	interrupts::enable();
+
+	kernel::boot_next_processor();
+
+	#[cfg(feature = "smp")]
+	synch_all_cores();
+
+	if kernel::is_uhyve_with_pci() || !env::is_uhyve() {
+		#[cfg(feature = "pci")]
+		drivers::pci::print_information();
+	}
+
+	// Start the initd task.
+	unsafe { PerCoreScheduler::spawn(initd, 0, scheduler::task::NORMAL_PRIO, 0, USER_STACK_SIZE) };
+
+	// Run the scheduler loop.
+	PerCoreScheduler::run();
+}
+
+/// Entry Point of Hermit for an Application Processor
+#[cfg(all(target_os = "none", feature = "smp"))]
+fn application_processor_main() -> ! {
+	kernel::application_processor_init();
+	#[cfg(not(target_arch = "riscv64"))]
+	scheduler::add_current_core();
+	interrupts::enable();
+	kernel::boot_next_processor();
+
+	debug!("Entering idle loop for application processor");
+
+	synch_all_cores();
+	executor::init();
+
+	// Run the scheduler loop.
+	PerCoreScheduler::run();
+}
+
+#[cfg(target_os = "none")]
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
+	let core_id = core_id();
+	panic_println!("[{core_id}][PANIC] {info}\n");
+
+	scheduler::shutdown(1);
+}

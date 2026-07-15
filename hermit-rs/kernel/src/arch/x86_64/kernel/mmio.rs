@@ -1,0 +1,278 @@
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::ptr::NonNull;
+use core::{ptr, str};
+
+use align_address::Align;
+use free_list::{PageLayout, PageRange};
+#[cfg(any(
+	feature = "virtio-console",
+	feature = "virtio-fs",
+	feature = "virtio-vsock",
+))]
+use hermit_sync::InterruptTicketMutex;
+use hermit_sync::without_interrupts;
+use memory_addresses::{PhysAddr, VirtAddr};
+use virtio::mmio::{DeviceRegisters, DeviceRegistersVolatileFieldAccess};
+use volatile::VolatileRef;
+
+use crate::arch::x86_64::mm::paging;
+use crate::arch::x86_64::mm::paging::{
+	BasePageSize, PageSize, PageTableEntryFlags, PageTableEntryFlagsExt,
+};
+use crate::drivers::InterruptHandlerMap;
+#[cfg(feature = "virtio-console")]
+use crate::drivers::console::VirtioConsoleDriver;
+#[cfg(feature = "virtio-fs")]
+use crate::drivers::fs::VirtioFsDriver;
+#[cfg(feature = "virtio-net")]
+use crate::drivers::net::virtio::VirtioNetDriver;
+use crate::drivers::virtio::transport::mmio as mmio_virtio;
+#[cfg(any(
+	feature = "virtio-console",
+	feature = "virtio-fs",
+	feature = "virtio-net",
+	feature = "virtio-vsock",
+))]
+use crate::drivers::virtio::transport::mmio::VirtioDriver;
+#[cfg(feature = "virtio-vsock")]
+use crate::drivers::vsock::VirtioVsockDriver;
+use crate::env;
+#[cfg(any(feature = "rtl8139", feature = "virtio-net"))]
+use crate::executor::device::NETWORK_DEVICE;
+use crate::init_cell::InitCell;
+use crate::mm::{FrameAlloc, PageBox, PageRangeAllocator};
+
+pub const MAGIC_VALUE: u32 = 0x7472_6976;
+
+static MMIO_DRIVERS: InitCell<Vec<MmioDriver>> = InitCell::new(Vec::new());
+
+#[allow(clippy::enum_variant_names)]
+pub(crate) enum MmioDriver {
+	#[cfg(feature = "virtio-console")]
+	VirtioConsole(InterruptTicketMutex<VirtioConsoleDriver>),
+	#[cfg(feature = "virtio-fs")]
+	VirtioFs(InterruptTicketMutex<VirtioFsDriver>),
+	#[cfg(feature = "virtio-vsock")]
+	VirtioVsock(InterruptTicketMutex<VirtioVsockDriver>),
+}
+
+impl MmioDriver {
+	#[cfg(feature = "virtio-console")]
+	fn get_console_driver(&self) -> Option<&InterruptTicketMutex<VirtioConsoleDriver>> {
+		#[allow(unreachable_patterns)]
+		match self {
+			Self::VirtioConsole(drv) => Some(drv),
+			_ => None,
+		}
+	}
+
+	#[cfg(feature = "virtio-fs")]
+	fn get_filesystem_driver(&self) -> Option<&InterruptTicketMutex<VirtioFsDriver>> {
+		#[allow(unreachable_patterns)]
+		match self {
+			Self::VirtioFs(drv) => Some(drv),
+			_ => None,
+		}
+	}
+
+	#[cfg(feature = "virtio-vsock")]
+	fn get_vsock_driver(&self) -> Option<&InterruptTicketMutex<VirtioVsockDriver>> {
+		#[allow(unreachable_patterns)]
+		match self {
+			Self::VirtioVsock(drv) => Some(drv),
+			_ => None,
+		}
+	}
+}
+
+unsafe fn check_ptr(ptr: *mut u8) -> Option<VolatileRef<'static, DeviceRegisters>> {
+	// Verify the first register value to find out if this is really an MMIO magic-value.
+	let mmio = unsafe { VolatileRef::new(NonNull::new(ptr.cast::<DeviceRegisters>()).unwrap()) };
+
+	let magic = mmio.as_ptr().magic_value().read().to_ne();
+	let version = mmio.as_ptr().version().read().to_ne();
+
+	if magic != MAGIC_VALUE {
+		trace!("It's not a MMIO-device at {mmio:p}");
+		return None;
+	}
+
+	if version != 2 {
+		trace!("Found a legacy device, which isn't supported");
+		return None;
+	}
+
+	let id = mmio.as_ptr().device_id().read();
+
+	if id == virtio::Id::Reserved {
+		return None;
+	}
+
+	info!("Found Virtio {id:?} device: {mmio:p}");
+	Some(mmio)
+}
+
+fn detect_device(
+	virtual_address: VirtAddr,
+	current_address: usize,
+) -> Option<VolatileRef<'static, DeviceRegisters>> {
+	trace!("try to detect MMIO device at physical address {current_address:#X}");
+
+	let mut flags = PageTableEntryFlags::empty();
+	flags.normal().writable();
+	paging::map::<BasePageSize>(
+		virtual_address,
+		PhysAddr::from(current_address.align_down(BasePageSize::SIZE as usize)),
+		1,
+		flags,
+	);
+
+	let addr = virtual_address.as_usize() | (current_address & (BasePageSize::SIZE as usize - 1));
+	let ptr = ptr::with_exposed_provenance_mut::<u8>(addr);
+
+	let mmio = unsafe { check_ptr(ptr) }?;
+
+	if cfg!(debug_assertions) {
+		let len = usize::try_from(BasePageSize::SIZE).unwrap();
+		let start = current_address.align_down(len);
+		let frame_range = PageRange::from_start_len(start, len).unwrap();
+
+		FrameAlloc::allocate_at(frame_range).unwrap_err();
+	}
+
+	Some(mmio)
+}
+
+fn check_linux_args(
+	linux_mmio: &'static [String],
+	virtual_address: VirtAddr,
+) -> impl Iterator<Item = (VolatileRef<'static, DeviceRegisters>, u8)> {
+	linux_mmio
+		.iter()
+		.inspect(|arg| trace!("check linux parameter: {arg}"))
+		.flat_map(move |arg| {
+			if let Some(arg) = arg.trim().trim_matches(char::from(0)).strip_prefix("4K@") {
+				let v: Vec<&str> = arg.trim().split(':').collect();
+				let without_prefix = v[0].trim_start_matches("0x");
+				let current_address = usize::from_str_radix(without_prefix, 16).unwrap();
+				let irq: u8 = v[1].parse::<u8>().unwrap();
+				detect_device(virtual_address, current_address).map(|mmio| (mmio, irq))
+			} else {
+				warn!("Invalid prefix in {arg}");
+				None
+			}
+		})
+}
+
+fn guess_device(
+	virtual_address: VirtAddr,
+) -> impl Iterator<Item = (VolatileRef<'static, DeviceRegisters>, u8)> {
+	// From https://gitlab.com/qemu-project/qemu/-/blob/v10.2.2/include/hw/i386/microvm.h#L53.
+	const VIRTIO_MMIO_BASE: usize = 0xfeb0_0000;
+	// Although these values are not constants in reality, those are the values
+	// that we have for our configuration at the time of writing, based on
+	// https://gitlab.com/qemu-project/qemu/-/blob/v10.2.2/hw/i386/microvm.c#L188-204.
+	const VIRTIO_IRQ_BASE: u8 = 5;
+	const VIRTIO_NUM_TRANSPORTS: u8 = 8;
+
+	(0..VIRTIO_NUM_TRANSPORTS).flat_map(move |i| {
+		detect_device(virtual_address, VIRTIO_MMIO_BASE + usize::from(i) * 512)
+			.map(|mmio| (mmio, VIRTIO_IRQ_BASE + i))
+	})
+}
+
+#[cfg(any(
+	feature = "virtio-console",
+	feature = "virtio-fs",
+	feature = "virtio-vsock",
+))]
+pub(crate) fn register_driver(drv: MmioDriver) {
+	MMIO_DRIVERS.with(|mmio_drivers| mmio_drivers.unwrap().push(drv));
+}
+
+#[cfg(feature = "virtio-net")]
+pub(crate) type NetworkDevice = VirtioNetDriver;
+
+#[cfg(feature = "virtio-console")]
+pub(crate) fn get_console_driver() -> Option<&'static InterruptTicketMutex<VirtioConsoleDriver>> {
+	MMIO_DRIVERS
+		.get()?
+		.iter()
+		.find_map(|drv| drv.get_console_driver())
+}
+
+#[cfg(feature = "virtio-fs")]
+pub(crate) fn get_filesystem_driver() -> Option<&'static InterruptTicketMutex<VirtioFsDriver>> {
+	MMIO_DRIVERS
+		.get()?
+		.iter()
+		.find_map(|drv| drv.get_filesystem_driver())
+}
+
+#[cfg(feature = "virtio-vsock")]
+pub(crate) fn get_vsock_driver() -> Option<&'static InterruptTicketMutex<VirtioVsockDriver>> {
+	MMIO_DRIVERS
+		.get()?
+		.iter()
+		.find_map(|drv| drv.get_vsock_driver())
+}
+
+fn register_mmio(
+	mmio: VolatileRef<'static, DeviceRegisters>,
+	irq: u8,
+	handlers: &mut InterruptHandlerMap,
+) {
+	match mmio_virtio::init_device(mmio, irq, handlers) {
+		#[cfg(feature = "virtio-console")]
+		Ok(VirtioDriver::Console(drv)) => {
+			register_driver(MmioDriver::VirtioConsole(InterruptTicketMutex::new(*drv)));
+		}
+		#[cfg(feature = "virtio-fs")]
+		Ok(VirtioDriver::Fs(drv)) => {
+			register_driver(MmioDriver::VirtioFs(InterruptTicketMutex::new(*drv)));
+		}
+		#[cfg(feature = "virtio-net")]
+		Ok(VirtioDriver::Net(drv)) => {
+			*NETWORK_DEVICE.lock() = Some(*drv);
+		}
+		#[cfg(feature = "virtio-vsock")]
+		Ok(VirtioDriver::Vsock(drv)) => {
+			register_driver(MmioDriver::VirtioVsock(InterruptTicketMutex::new(*drv)));
+		}
+		Err(err) => error!("Could not initialize virtio-mmio device: {err}"),
+	}
+}
+
+pub(crate) fn init_drivers(handlers: &mut InterruptHandlerMap) {
+	without_interrupts(|| {
+		let layout = PageLayout::from_size(BasePageSize::SIZE as usize).unwrap();
+		let page_range = PageBox::new(layout).unwrap();
+		let virtual_address = VirtAddr::from(page_range.start());
+
+		let linux_mmio = env::mmio();
+
+		if linux_mmio.is_empty() {
+			for (mmio, irq) in guess_device(virtual_address) {
+				register_mmio(mmio, irq, handlers);
+			}
+		} else {
+			for (mmio, irq) in check_linux_args(linux_mmio, virtual_address) {
+				register_mmio(mmio, irq, handlers);
+			}
+		}
+
+		MMIO_DRIVERS.finalize();
+
+		#[cfg(feature = "virtio-console")]
+		if get_console_driver().is_some() {
+			use crate::console::IoDevice;
+			use crate::drivers::console::VirtioUART;
+
+			info!("Switch to virtio console");
+			crate::console::CONSOLE
+				.lock()
+				.replace_device(IoDevice::Virtio(VirtioUART::new()));
+		}
+	});
+}

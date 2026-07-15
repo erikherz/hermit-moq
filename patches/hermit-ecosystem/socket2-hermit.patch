@@ -1,0 +1,1414 @@
+diff -ruN '--exclude=target' /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.4/Cargo.toml /root/iroh-spike/vendor/socket2-hermit/Cargo.toml
+--- /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.4/Cargo.toml	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/socket2-hermit/Cargo.toml	2026-07-12 22:05:11.588459106 +0000
+@@ -102,3 +102,8 @@
+     "Win32_System_Threading",
+     "Win32_System_WindowsProgramming",
+ ]
++
++
++[target.'cfg(target_os = "hermit")'.dependencies]
++hermit-abi = "0.5"
+diff -ruN '--exclude=target' /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.4/src/lib.rs /root/iroh-spike/vendor/socket2-hermit/src/lib.rs
+--- /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.4/src/lib.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/socket2-hermit/src/lib.rs	2026-07-12 22:03:20.969410931 +0000
+@@ -60,6 +60,9 @@
+ // Disallow warnings in examples.
+ #![doc(test(attr(deny(warnings))))]
+ 
++#[cfg(target_os = "hermit")]
++extern crate hermit_abi as libc;
++
+ use std::fmt;
+ #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
+ use std::io::IoSlice;
+@@ -109,7 +112,7 @@
+     ($from: ty, $for: ty) => {
+         impl From<$from> for $for {
+             fn from(socket: $from) -> $for {
+-                #[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
++                #[cfg(any(unix, target_os = "hermit", all(target_os = "wasi", not(target_env = "p1"))))]
+                 unsafe {
+                     <$for>::from_raw_fd(socket.into_raw_fd())
+                 }
+@@ -177,13 +180,13 @@
+ mod sockref;
+ 
+ #[cfg_attr(
+-    any(unix, all(target_os = "wasi", not(target_env = "p1"))),
++    any(unix, target_os = "hermit", all(target_os = "wasi", not(target_env = "p1"))),
+     path = "sys/unix.rs"
+ )]
+ #[cfg_attr(windows, path = "sys/windows.rs")]
+ mod sys;
+ 
+-#[cfg(not(any(windows, unix, all(target_os = "wasi", not(target_env = "p1")))))]
++#[cfg(not(any(windows, unix, target_os = "hermit", all(target_os = "wasi", not(target_env = "p1")))))]
+ compile_error!("Socket2 doesn't support the compile target");
+ 
+ use sys::c_int;
+@@ -225,7 +228,7 @@
+     pub const IPV6: Domain = Domain(sys::AF_INET6);
+ 
+     /// Domain for Unix socket communication, corresponding to `AF_UNIX`.
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub const UNIX: Domain = Domain(sys::AF_UNIX);
+ 
+     /// Returns the correct domain for `address`.
+@@ -281,7 +284,7 @@
+     /// Type corresponding to `SOCK_SEQPACKET`.
+     #[cfg(all(
+         feature = "all",
+-        not(any(target_os = "espidf", target_os = "wasi", target_os = "horizon"))
++        not(any(target_os = "espidf", target_os = "wasi", target_os = "horizon", target_os = "hermit"))
+     ))]
+     pub const SEQPACKET: Type = Type(sys::SOCK_SEQPACKET);
+ 
+@@ -292,7 +295,8 @@
+             target_os = "redox",
+             target_os = "espidf",
+             target_os = "wasi",
+-            target_os = "horizon"
++            target_os = "horizon",
++            target_os = "hermit"
+         ))
+     ))]
+     pub const RAW: Type = Type(sys::SOCK_RAW);
+@@ -322,11 +326,11 @@
+ 
+ impl Protocol {
+     /// Protocol corresponding to `ICMPv4`.
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub const ICMPV4: Protocol = Protocol(sys::IPPROTO_ICMP);
+ 
+     /// Protocol corresponding to `ICMPv6`.
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub const ICMPV6: Protocol = Protocol(sys::IPPROTO_ICMPV6);
+ 
+     /// Protocol corresponding to `TCP`.
+@@ -379,11 +383,11 @@
+ /// Flags for incoming messages.
+ ///
+ /// Flags provide additional information about incoming messages.
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ #[derive(Copy, Clone, Eq, PartialEq)]
+ pub struct RecvFlags(c_int);
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ impl RecvFlags {
+     /// Check if the message contains a truncated datagram.
+     ///
+@@ -402,14 +406,17 @@
+ ///
+ /// [`IoSliceMut`]: std::io::IoSliceMut
+ #[repr(transparent)]
++#[cfg(not(target_os = "hermit"))]
+ pub struct MaybeUninitSlice<'a>(sys::MaybeUninitSlice<'a>);
+ 
++#[cfg(not(target_os = "hermit"))]
+ impl<'a> fmt::Debug for MaybeUninitSlice<'a> {
+     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+         fmt::Debug::fmt(self.0.as_slice(), fmt)
+     }
+ }
+ 
++#[cfg(not(target_os = "hermit"))]
+ impl<'a> MaybeUninitSlice<'a> {
+     /// Creates a new `MaybeUninitSlice` wrapping a byte slice.
+     ///
+@@ -421,6 +428,7 @@
+     }
+ }
+ 
++#[cfg(not(target_os = "hermit"))]
+ impl<'a> Deref for MaybeUninitSlice<'a> {
+     type Target = [MaybeUninit<u8>];
+ 
+@@ -429,6 +437,7 @@
+     }
+ }
+ 
++#[cfg(not(target_os = "hermit"))]
+ impl<'a> DerefMut for MaybeUninitSlice<'a> {
+     fn deref_mut(&mut self) -> &mut [MaybeUninit<u8>] {
+         self.0.as_mut_slice()
+@@ -585,7 +594,7 @@
+ ///
+ /// This wraps `msghdr` on Unix and `WSAMSG` on Windows. Also see [`MsgHdrMut`]
+ /// for the variant used by `recvmsg(2)`.
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ #[repr(transparent)]
+ pub struct MsgHdr<'addr, 'bufs, 'control> {
+     inner: sys::msghdr,
+@@ -593,7 +602,7 @@
+     _lifetimes: PhantomData<(&'addr SockAddr, &'bufs IoSlice<'bufs>, &'control [u8])>,
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ impl<'addr, 'bufs, 'control> MsgHdr<'addr, 'bufs, 'control> {
+     /// Create a new `MsgHdr` with all empty/zero fields.
+     #[allow(clippy::new_without_default)]
+@@ -643,7 +652,7 @@
+     }
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ impl<'name, 'bufs, 'control> fmt::Debug for MsgHdr<'name, 'bufs, 'control> {
+     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+         "MsgHdr".fmt(fmt)
+@@ -651,13 +660,14 @@
+ }
+ 
+ #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ unsafe impl Send for MsgHdr<'_, '_, '_> {}
+ 
+ /// Configuration of a `recvmsg(2)` system call.
+ ///
+ /// This wraps `msghdr` on Unix and `WSAMSG` on Windows. Also see [`MsgHdr`] for
+ /// the variant used by `sendmsg(2)`.
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ #[repr(transparent)]
+ pub struct MsgHdrMut<'addr, 'bufs, 'control> {
+     inner: sys::msghdr,
+@@ -669,7 +679,7 @@
+     )>,
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ impl<'addr, 'bufs, 'control> MsgHdrMut<'addr, 'bufs, 'control> {
+     /// Create a new `MsgHdrMut` with all empty/zero fields.
+     #[allow(clippy::new_without_default)]
+@@ -724,7 +734,7 @@
+     }
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ impl<'name, 'bufs, 'control> fmt::Debug for MsgHdrMut<'name, 'bufs, 'control> {
+     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+         "MsgHdrMut".fmt(fmt)
+@@ -732,4 +742,5 @@
+ }
+ 
+ #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ unsafe impl Send for MsgHdrMut<'_, '_, '_> {}
+diff -ruN '--exclude=target' /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.4/src/sockaddr.rs /root/iroh-spike/vendor/socket2-hermit/src/sockaddr.rs
+--- /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.4/src/sockaddr.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/socket2-hermit/src/sockaddr.rs	2026-07-12 22:03:20.973554774 +0000
+@@ -8,7 +8,7 @@
+ #[cfg(windows)]
+ use windows_sys::Win32::Networking::WinSock::SOCKADDR_IN6_0;
+ 
+-#[cfg(not(target_os = "wasi"))]
++#[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+ use crate::sys::AF_UNIX;
+ use crate::sys::{c_int, sockaddr_in, sockaddr_in6, sockaddr_storage, AF_INET, AF_INET6};
+ use crate::Domain;
+@@ -215,7 +215,7 @@
+     /// Constructs a `SockAddr` with the family `AF_UNIX` and the provided path.
+     ///
+     /// Returns an error if the path is longer than `SUN_LEN`.
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub fn unix<P>(path: P) -> io::Result<SockAddr>
+     where
+         P: AsRef<Path>,
+@@ -273,11 +273,18 @@
+ 
+     /// Returns true if this address is of a unix socket (for local interprocess communication),
+     /// i.e. it is from the `AF_UNIX` family, false otherwise.
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub fn is_unix(&self) -> bool {
+         self.storage.ss_family == AF_UNIX as sa_family_t
+     }
+ 
++    /// Returns true if this address is of a unix socket (for local interprocess communication),
++    /// i.e. it is from the `AF_UNIX` family, false otherwise.
++    #[cfg(target_os = "hermit")]
++    pub fn is_unix(&self) -> bool {
++        false
++    }
++
+     /// Returns this address as a `SocketAddr` if it is in the `AF_INET` (IPv4)
+     /// or `AF_INET6` (IPv6) family, otherwise returns `None`.
+     pub fn as_socket(&self) -> Option<SocketAddr> {
+@@ -298,7 +305,7 @@
+                 ip,
+                 port,
+                 addr.sin6_flowinfo,
+-                #[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
++                #[cfg(any(unix, target_os = "hermit", all(target_os = "wasi", not(target_env = "p1"))))]
+                 addr.sin6_scope_id,
+                 #[cfg(windows)]
+                 unsafe {
+@@ -365,7 +372,6 @@
+             target_os = "dragonfly",
+             target_os = "freebsd",
+             target_os = "haiku",
+-            target_os = "hermit",
+             target_os = "ios",
+             target_os = "visionos",
+             target_os = "macos",
+@@ -393,7 +399,7 @@
+             storage.sin6_port = addr.port().to_be();
+             storage.sin6_addr = crate::sys::to_in6_addr(addr.ip());
+             storage.sin6_flowinfo = addr.flowinfo();
+-            #[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
++            #[cfg(any(unix, target_os = "hermit", all(target_os = "wasi", not(target_env = "p1"))))]
+             {
+                 storage.sin6_scope_id = addr.scope_id();
+             }
+@@ -409,7 +415,6 @@
+             target_os = "dragonfly",
+             target_os = "freebsd",
+             target_os = "haiku",
+-            target_os = "hermit",
+             target_os = "ios",
+             target_os = "visionos",
+             target_os = "macos",
+@@ -434,7 +439,6 @@
+             target_os = "dragonfly",
+             target_os = "freebsd",
+             target_os = "haiku",
+-            target_os = "hermit",
+             target_os = "ios",
+             target_os = "visionos",
+             target_os = "macos",
+diff -ruN '--exclude=target' /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.4/src/socket.rs /root/iroh-spike/vendor/socket2-hermit/src/socket.rs
+--- /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.4/src/socket.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/socket2-hermit/src/socket.rs	2026-07-12 22:03:20.972324363 +0000
+@@ -14,7 +14,7 @@
+ #[cfg(not(target_os = "nto"))]
+ use std::net::Ipv6Addr;
+ use std::net::{self, Ipv4Addr, Shutdown};
+-#[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
++#[cfg(any(unix, target_os = "hermit", all(target_os = "wasi", not(target_env = "p1"))))]
+ use std::os::fd::{FromRawFd, IntoRawFd};
+ #[cfg(windows)]
+ use std::os::windows::io::{FromRawSocket, IntoRawSocket};
+@@ -24,7 +24,7 @@
+ #[cfg(all(unix, not(any(target_os = "redox", target_os = "horizon"))))]
+ use crate::MsgHdrMut;
+ use crate::{Domain, Protocol, SockAddr, TcpKeepalive, Type};
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ use crate::{MaybeUninitSlice, MsgHdr, RecvFlags};
+ 
+ /// Owned wrapper around a system socket.
+@@ -335,6 +335,7 @@
+ 
+     /// Returns the [`Type`] of this socket by checking the `SO_TYPE` option on
+     /// this socket.
++    #[cfg(not(target_os = "hermit"))]
+     pub fn r#type(&self) -> io::Result<Type> {
+         unsafe { getsockopt::<c_int>(self.as_raw(), sys::SOL_SOCKET, sys::SO_TYPE).map(Type) }
+     }
+@@ -352,7 +353,7 @@
+     /// On Windows this can **not** be used function cannot be used on a
+     /// QOS-enabled socket, see
+     /// <https://docs.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsaduplicatesocketw>.
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub fn try_clone(&self) -> io::Result<Socket> {
+         sys::try_clone(self.as_raw()).map(Socket::from_raw)
+     }
+@@ -427,7 +428,7 @@
+     /// [`recv`]: Socket::recv
+     /// [`out_of_band_inline`]: Socket::out_of_band_inline
+     #[cfg_attr(target_os = "redox", allow(rustdoc::broken_intra_doc_links))]
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub fn recv_out_of_band(&self, buf: &mut [MaybeUninit<u8>]) -> io::Result<usize> {
+         self.recv_with_flags(buf, sys::MSG_OOB)
+     }
+@@ -470,7 +471,7 @@
+     /// Note that the [`io::Read::read_vectored`] implementation calls this
+     /// function with `buf`s of type `&mut [IoSliceMut]`, allowing initialised
+     /// buffers to be used without using `unsafe`.
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     pub fn recv_vectored(
+         &self,
+         bufs: &mut [MaybeUninitSlice<'_>],
+@@ -489,7 +490,7 @@
+     /// as [`recv_vectored`].
+     ///
+     /// [`recv_vectored`]: Socket::recv_vectored
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     pub fn recv_vectored_with_flags(
+         &self,
+         bufs: &mut [MaybeUninitSlice<'_>],
+@@ -554,7 +555,7 @@
+     /// as [`recv_vectored`].
+     ///
+     /// [`recv_vectored`]: Socket::recv_vectored
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     pub fn recv_from_vectored(
+         &self,
+         bufs: &mut [MaybeUninitSlice<'_>],
+@@ -573,7 +574,7 @@
+     /// as [`recv_vectored`].
+     ///
+     /// [`recv_vectored`]: Socket::recv_vectored
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     pub fn recv_from_vectored_with_flags(
+         &self,
+         bufs: &mut [MaybeUninitSlice<'_>],
+@@ -657,7 +658,7 @@
+     }
+ 
+     /// Send data to the connected peer. Returns the amount of bytes written.
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     pub fn send_vectored(&self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+         self.send_vectored_with_flags(bufs, 0)
+     }
+@@ -667,7 +668,7 @@
+     #[doc = man_links!(sendmsg(2))]
+     ///
+     /// [`send_vectored`]: Socket::send_vectored
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     pub fn send_vectored_with_flags(
+         &self,
+         bufs: &[IoSlice<'_>],
+@@ -684,7 +685,7 @@
+     /// [`send`]: Socket::send
+     /// [`out_of_band_inline`]: Socket::out_of_band_inline
+     #[cfg_attr(target_os = "redox", allow(rustdoc::broken_intra_doc_links))]
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub fn send_out_of_band(&self, buf: &[u8]) -> io::Result<usize> {
+         self.send_with_flags(buf, sys::MSG_OOB)
+     }
+@@ -714,7 +715,7 @@
+     /// Send data to a peer listening on `addr`. Returns the amount of bytes
+     /// written.
+     #[doc = man_links!(sendmsg(2))]
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     pub fn send_to_vectored(&self, bufs: &[IoSlice<'_>], addr: &SockAddr) -> io::Result<usize> {
+         self.send_to_vectored_with_flags(bufs, addr, 0)
+     }
+@@ -723,7 +724,7 @@
+     /// arbitrary flags to the underlying `sendmsg`/`WSASendTo` call.
+     ///
+     /// [`send_to_vectored`]: Socket::send_to_vectored
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     pub fn send_to_vectored_with_flags(
+         &self,
+         bufs: &[IoSlice<'_>],
+@@ -735,7 +736,7 @@
+ 
+     /// Send a message on a socket using a message structure.
+     #[doc = man_links!(sendmsg(2))]
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     pub fn sendmsg(&self, msg: &MsgHdr<'_, '_, '_>, flags: sys::c_int) -> io::Result<usize> {
+         sys::sendmsg(self.as_raw(), msg, flags)
+     }
+@@ -972,7 +973,7 @@
+     /// For more information about this option, see [`set_out_of_band_inline`].
+     ///
+     /// [`set_out_of_band_inline`]: Socket::set_out_of_band_inline
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "hermit")))]
+     pub fn out_of_band_inline(&self) -> io::Result<bool> {
+         unsafe {
+             getsockopt::<c_int>(self.as_raw(), sys::SOL_SOCKET, sys::SO_OOBINLINE)
+@@ -986,7 +987,7 @@
+     /// receive data stream. Otherwise, out-of-band data is passed only when the
+     /// `MSG_OOB` flag is set during receiving. As per RFC6093, TCP sockets
+     /// using the Urgent mechanism are encouraged to set this flag.
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "hermit")))]
+     pub fn set_out_of_band_inline(&self, oob_inline: bool) -> io::Result<()> {
+         unsafe {
+             setsockopt(
+@@ -1204,6 +1205,7 @@
+ /// * Linux: <https://man7.org/linux/man-pages/man7/ip.7.html>
+ /// * Windows: <https://docs.microsoft.com/en-us/windows/win32/winsock/ipproto-ip-socket-options>
+ impl Socket {
++
+     /// Get the value of the `IP_HDRINCL` option on this socket.
+     ///
+     /// For more information about this option, see [`set_header_included_v4`].
+@@ -1215,7 +1217,8 @@
+             target_os = "redox",
+             target_os = "espidf",
+             target_os = "wasi",
+-            target_os = "horizon"
++            target_os = "horizon",
++            target_os = "hermit"
+         ))
+     ))]
+     pub fn header_included_v4(&self) -> io::Result<bool> {
+@@ -1225,6 +1228,7 @@
+         }
+     }
+ 
++
+     /// Set the value of the `IP_HDRINCL` option on this socket.
+     ///
+     /// If enabled, the user supplies an IP header in front of the user data.
+@@ -1237,7 +1241,12 @@
+     /// [`IP_TTL`]: Socket::set_ttl_v4
+     /// [`IP_TOS`]: Socket::set_tos_v4
+     #[cfg_attr(
+-        any(target_os = "fuchsia", target_os = "illumos", target_os = "solaris"),
++        any(
++            target_os = "fuchsia",
++            target_os = "illumos",
++            target_os = "hermit",
++            target_os = "solaris"
++        ),
+         allow(rustdoc::broken_intra_doc_links)
+     )]
+     #[cfg(all(
+@@ -1246,7 +1255,8 @@
+             target_os = "redox",
+             target_os = "espidf",
+             target_os = "wasi",
+-            target_os = "horizon"
++            target_os = "horizon",
++            target_os = "hermit"
+         ))
+     ))]
+     pub fn set_header_included_v4(&self, included: bool) -> io::Result<()> {
+@@ -1307,6 +1317,7 @@
+     /// address of the local interface with which the system should join the
+     /// multicast group. If it's [`Ipv4Addr::UNSPECIFIED`] (`INADDR_ANY`) then
+     /// an appropriate interface is chosen by the system.
++    #[cfg(not(target_os = "hermit"))]
+     pub fn join_multicast_v4(&self, multiaddr: &Ipv4Addr, interface: &Ipv4Addr) -> io::Result<()> {
+         let mreq = sys::IpMreq {
+             imr_multiaddr: sys::to_in_addr(multiaddr),
+@@ -1320,6 +1331,7 @@
+     /// For more information about this option, see [`join_multicast_v4`].
+     ///
+     /// [`join_multicast_v4`]: Socket::join_multicast_v4
++    #[cfg(not(target_os = "hermit"))]
+     pub fn leave_multicast_v4(&self, multiaddr: &Ipv4Addr, interface: &Ipv4Addr) -> io::Result<()> {
+         let mreq = sys::IpMreq {
+             imr_multiaddr: sys::to_in_addr(multiaddr),
+@@ -1354,7 +1366,8 @@
+         target_os = "vita",
+         target_os = "cygwin",
+         target_os = "wasi",
+-        target_os = "horizon"
++        target_os = "horizon",
++        target_os = "hermit"
+     )))]
+     pub fn join_multicast_v4_n(
+         &self,
+@@ -1390,7 +1403,8 @@
+         target_os = "vita",
+         target_os = "cygwin",
+         target_os = "wasi",
+-        target_os = "horizon"
++        target_os = "horizon",
++        target_os = "hermit"
+     )))]
+     pub fn leave_multicast_v4_n(
+         &self,
+@@ -1427,7 +1441,8 @@
+         target_os = "espidf",
+         target_os = "vita",
+         target_os = "wasi",
+-        target_os = "horizon"
++        target_os = "horizon",
++        target_os = "hermit"
+     )))]
+     pub fn join_ssm_v4(
+         &self,
+@@ -1467,7 +1482,8 @@
+         target_os = "espidf",
+         target_os = "vita",
+         target_os = "wasi",
+-        target_os = "horizon"
++        target_os = "horizon",
++        target_os = "hermit"
+     )))]
+     pub fn leave_ssm_v4(
+         &self,
+@@ -1530,7 +1546,7 @@
+     /// For more information about this option, see [`set_multicast_if_v4`].
+     ///
+     /// [`set_multicast_if_v4`]: Socket::set_multicast_if_v4
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub fn multicast_if_v4(&self) -> io::Result<Ipv4Addr> {
+         unsafe {
+             getsockopt(self.as_raw(), sys::IPPROTO_IP, sys::IP_MULTICAST_IF).map(sys::from_in_addr)
+@@ -1540,7 +1556,7 @@
+     /// Set the value of the `IP_MULTICAST_IF` option for this socket.
+     ///
+     /// Specifies the interface to use for routing multicast packets.
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub fn set_multicast_if_v4(&self, interface: &Ipv4Addr) -> io::Result<()> {
+         let interface = sys::to_in_addr(interface);
+         unsafe {
+@@ -1558,6 +1574,7 @@
+     /// For more information about this option, see [`set_multicast_loop_v4`].
+     ///
+     /// [`set_multicast_loop_v4`]: Socket::set_multicast_loop_v4
++    #[cfg(not(target_os = "hermit"))]
+     pub fn multicast_loop_v4(&self) -> io::Result<bool> {
+         unsafe {
+             getsockopt::<c_int>(self.as_raw(), sys::IPPROTO_IP, sys::IP_MULTICAST_LOOP)
+@@ -1569,6 +1586,7 @@
+     ///
+     /// If enabled, multicast packets will be looped back to the local socket.
+     /// Note that this may not have any affect on IPv6 sockets.
++    #[cfg(not(target_os = "hermit"))]
+     pub fn set_multicast_loop_v4(&self, loop_v4: bool) -> io::Result<()> {
+         unsafe {
+             setsockopt(
+@@ -1585,6 +1603,7 @@
+     /// For more information about this option, see [`set_multicast_ttl_v4`].
+     ///
+     /// [`set_multicast_ttl_v4`]: Socket::set_multicast_ttl_v4
++    #[cfg(not(target_os = "hermit"))]
+     pub fn multicast_ttl_v4(&self) -> io::Result<u32> {
+         unsafe {
+             getsockopt::<c_int>(self.as_raw(), sys::IPPROTO_IP, sys::IP_MULTICAST_TTL)
+@@ -1599,6 +1618,7 @@
+     /// don't leave the local network unless explicitly requested.
+     ///
+     /// Note that this may not have any affect on IPv6 sockets.
++    #[cfg(not(target_os = "hermit"))]
+     pub fn set_multicast_ttl_v4(&self, ttl: u32) -> io::Result<()> {
+         unsafe {
+             setsockopt(
+@@ -1615,6 +1635,7 @@
+     /// For more information about this option, see [`set_ttl_v4`].
+     ///
+     /// [`set_ttl_v4`]: Socket::set_ttl_v4
++    #[cfg(not(target_os = "hermit"))]
+     pub fn ttl_v4(&self) -> io::Result<u32> {
+         unsafe {
+             getsockopt::<c_int>(self.as_raw(), sys::IPPROTO_IP, sys::IP_TTL).map(|ttl| ttl as u32)
+@@ -1625,6 +1646,7 @@
+     ///
+     /// This value sets the time-to-live field that is used in every packet sent
+     /// from this socket.
++    #[cfg(not(target_os = "hermit"))]
+     pub fn set_ttl_v4(&self, ttl: u32) -> io::Result<()> {
+         unsafe { setsockopt(self.as_raw(), sys::IPPROTO_IP, sys::IP_TTL, ttl as c_int) }
+     }
+@@ -1691,7 +1713,8 @@
+         target_os = "vita",
+         target_os = "cygwin",
+         target_os = "wasi",
+-        target_os = "horizon"
++        target_os = "horizon",
++        target_os = "hermit"
+     )))]
+     pub fn set_recv_tos_v4(&self, recv_tos: bool) -> io::Result<()> {
+         unsafe {
+@@ -1725,7 +1748,8 @@
+         target_os = "vita",
+         target_os = "cygwin",
+         target_os = "wasi",
+-        target_os = "horizon"
++        target_os = "horizon",
++        target_os = "hermit"
+     )))]
+     pub fn recv_tos_v4(&self) -> io::Result<bool> {
+         unsafe {
+@@ -1764,6 +1788,7 @@
+         feature = "all",
+         not(any(
+             target_os = "redox",
++            target_os = "hermit",
+             target_os = "espidf",
+             target_os = "openbsd",
+             target_os = "freebsd",
+@@ -1796,6 +1821,7 @@
+         feature = "all",
+         not(any(
+             target_os = "redox",
++            target_os = "hermit",
+             target_os = "espidf",
+             target_os = "openbsd",
+             target_os = "freebsd",
+@@ -1912,7 +1938,7 @@
+     /// For more information about this option, see [`set_multicast_hops_v6`].
+     ///
+     /// [`set_multicast_hops_v6`]: Socket::set_multicast_hops_v6
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub fn multicast_hops_v6(&self) -> io::Result<u32> {
+         unsafe {
+             getsockopt::<c_int>(self.as_raw(), sys::IPPROTO_IPV6, sys::IPV6_MULTICAST_HOPS)
+@@ -1925,7 +1951,7 @@
+     /// Indicates the number of "routers" multicast packets will transit for
+     /// this socket. The default value is 1 which means that multicast packets
+     /// don't leave the local network unless explicitly requested.
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub fn set_multicast_hops_v6(&self, hops: u32) -> io::Result<()> {
+         unsafe {
+             setsockopt(
+@@ -1977,7 +2003,7 @@
+     /// For more information about this option, see [`set_multicast_if_v6`].
+     ///
+     /// [`set_multicast_if_v6`]: Socket::set_multicast_if_v6
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub fn multicast_if_v6(&self) -> io::Result<u32> {
+         unsafe {
+             getsockopt::<c_int>(self.as_raw(), sys::IPPROTO_IPV6, sys::IPV6_MULTICAST_IF)
+@@ -1990,7 +2016,7 @@
+     /// Specifies the interface to use for routing multicast packets. Unlike
+     /// ipv4, this is generally required in ipv6 contexts where network routing
+     /// prefixes may overlap.
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     pub fn set_multicast_if_v6(&self, interface: u32) -> io::Result<()> {
+         unsafe {
+             setsockopt(
+@@ -2007,6 +2033,7 @@
+     /// For more information about this option, see [`set_multicast_loop_v6`].
+     ///
+     /// [`set_multicast_loop_v6`]: Socket::set_multicast_loop_v6
++    #[cfg(not(target_os = "hermit"))]
+     pub fn multicast_loop_v6(&self) -> io::Result<bool> {
+         unsafe {
+             getsockopt::<c_int>(self.as_raw(), sys::IPPROTO_IPV6, sys::IPV6_MULTICAST_LOOP)
+@@ -2018,6 +2045,7 @@
+     ///
+     /// Controls whether this socket sees the multicast packets it sends itself.
+     /// Note that this may not have any affect on IPv4 sockets.
++    #[cfg(not(target_os = "hermit"))]
+     pub fn set_multicast_loop_v6(&self, loop_v6: bool) -> io::Result<()> {
+         unsafe {
+             setsockopt(
+@@ -2032,6 +2060,7 @@
+     /// Get the value of the `IPV6_UNICAST_HOPS` option for this socket.
+     ///
+     /// Specifies the hop limit for ipv6 unicast packets
++    #[cfg(not(target_os = "hermit"))]
+     pub fn unicast_hops_v6(&self) -> io::Result<u32> {
+         unsafe {
+             getsockopt::<c_int>(self.as_raw(), sys::IPPROTO_IPV6, sys::IPV6_UNICAST_HOPS)
+@@ -2042,6 +2071,7 @@
+     /// Set the value for the `IPV6_UNICAST_HOPS` option on this socket.
+     ///
+     /// Specifies the hop limit for ipv6 unicast packets
++    #[cfg(not(target_os = "hermit"))]
+     pub fn set_unicast_hops_v6(&self, hops: u32) -> io::Result<()> {
+         unsafe {
+             setsockopt(
+@@ -2058,6 +2088,7 @@
+     /// For more information about this option, see [`set_only_v6`].
+     ///
+     /// [`set_only_v6`]: Socket::set_only_v6
++    #[cfg(not(target_os = "hermit"))]
+     pub fn only_v6(&self) -> io::Result<bool> {
+         unsafe {
+             getsockopt::<Bool>(self.as_raw(), sys::IPPROTO_IPV6, sys::IPV6_V6ONLY)
+@@ -2073,6 +2104,7 @@
+     ///
+     /// If this is set to `false` then the socket can be used to send and
+     /// receive packets from an IPv4-mapped IPv6 address.
++    #[cfg(not(target_os = "hermit"))]
+     pub fn set_only_v6(&self, only_v6: bool) -> io::Result<()> {
+         unsafe {
+             setsockopt(
+@@ -2102,7 +2134,8 @@
+         target_os = "espidf",
+         target_os = "vita",
+         target_os = "wasi",
+-        target_os = "horizon"
++        target_os = "horizon",
++        target_os = "hermit"
+     )))]
+     pub fn recv_tclass_v6(&self) -> io::Result<bool> {
+         unsafe {
+@@ -2129,7 +2162,8 @@
+         target_os = "espidf",
+         target_os = "vita",
+         target_os = "wasi",
+-        target_os = "horizon"
++        target_os = "horizon",
++        target_os = "hermit"
+     )))]
+     pub fn set_recv_tclass_v6(&self, recv_tclass: bool) -> io::Result<()> {
+         unsafe {
+@@ -2157,6 +2191,7 @@
+             target_os = "netbsd",
+             target_os = "openbsd",
+             target_os = "redox",
++            target_os = "hermit",
+             target_os = "solaris",
+             target_os = "haiku",
+             target_os = "hurd",
+@@ -2188,6 +2223,7 @@
+             target_os = "netbsd",
+             target_os = "openbsd",
+             target_os = "redox",
++            target_os = "hermit",
+             target_os = "solaris",
+             target_os = "haiku",
+             target_os = "hurd",
+@@ -2235,7 +2271,8 @@
+             windows,
+             target_os = "haiku",
+             target_os = "openbsd",
+-            target_os = "vita"
++            target_os = "vita",
++            target_os = "hermit",
+         ))
+     ))]
+     pub fn tcp_keepalive_time(&self) -> io::Result<Duration> {
+@@ -2395,7 +2432,7 @@
+         self.recv(buf)
+     }
+ 
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
+         // Safety: both `IoSliceMut` and `MaybeUninitSlice` promise to have the
+         // same layout, that of `iovec`/`WSABUF`. Furthermore, `recv_vectored`
+@@ -2413,7 +2450,7 @@
+         self.recv(buf)
+     }
+ 
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> io::Result<usize> {
+         // Safety: see other `Read::read` impl.
+         let bufs = unsafe { &mut *(bufs as *mut [IoSliceMut<'_>] as *mut [MaybeUninitSlice<'_>]) };
+@@ -2426,7 +2463,7 @@
+         self.send(buf)
+     }
+ 
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+         self.send_vectored(bufs)
+     }
+@@ -2441,7 +2478,7 @@
+         self.send(buf)
+     }
+ 
+-    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> io::Result<usize> {
+         self.send_vectored(bufs)
+     }
+diff -ruN '--exclude=target' /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.4/src/sockref.rs /root/iroh-spike/vendor/socket2-hermit/src/sockref.rs
+--- /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.4/src/sockref.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/socket2-hermit/src/sockref.rs	2026-07-12 22:03:20.973963297 +0000
+@@ -2,7 +2,7 @@
+ use std::marker::PhantomData;
+ use std::mem::ManuallyDrop;
+ use std::ops::Deref;
+-#[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
++#[cfg(any(unix, target_os = "hermit", all(target_os = "wasi", not(target_env = "p1"))))]
+ use std::os::fd::{AsFd, AsRawFd, FromRawFd};
+ #[cfg(windows)]
+ use std::os::windows::io::{AsRawSocket, AsSocket, FromRawSocket};
+@@ -77,7 +77,7 @@
+ }
+ 
+ /// On Windows, a corresponding `From<&impl AsSocket>` implementation exists.
+-#[cfg(any(unix, all(target_os = "wasi", not(target_env = "p1"))))]
++#[cfg(any(unix, target_os = "hermit", all(target_os = "wasi", not(target_env = "p1"))))]
+ impl<'s, S> From<&'s S> for SockRef<'s>
+ where
+     S: AsFd,
+diff -ruN '--exclude=target' /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.4/src/sys/unix.rs /root/iroh-spike/vendor/socket2-hermit/src/sys/unix.rs
+--- /root/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/socket2-0.6.4/src/sys/unix.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/socket2-hermit/src/sys/unix.rs	2026-07-13 00:21:06.978509159 +0000
+@@ -46,9 +46,11 @@
+ ))]
+ use std::num::NonZeroUsize;
+ use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+-#[cfg(not(target_os = "wasi"))]
++#[cfg(all(unix, not(target_os = "wasi")))]
+ use std::os::unix::ffi::OsStrExt;
+-#[cfg(all(feature = "all", unix))]
++#[cfg(target_os = "hermit")]
++use std::os::hermit::ffi::OsStrExt;
++#[cfg(all(feature = "all", not(target_os = "hermit")))]
+ use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
+ #[cfg(not(target_os = "wasi"))]
+ use std::path::Path;
+@@ -63,20 +65,24 @@
+     target_os = "tvos",
+     target_os = "watchos",
+     target_os = "cygwin",
++    target_os = "hermit",
+ )))]
+ use libc::ssize_t;
++#[allow(non_camel_case_types)]
++#[cfg(target_os = "hermit")]
++type ssize_t = isize;
+ use libc::{in6_addr, in_addr};
+ 
+ #[cfg(not(target_os = "wasi"))]
+ use crate::SockAddrStorage;
+ use crate::{Domain, Protocol, SockAddr, TcpKeepalive, Type};
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ use crate::{MsgHdr, MsgHdrMut, RecvFlags};
+ 
+ pub(crate) use std::ffi::c_int;
+ 
+ // Used in `Domain`.
+-#[cfg(not(target_os = "wasi"))]
++#[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+ pub(crate) use libc::AF_UNIX;
+ pub(crate) use libc::{AF_INET, AF_INET6};
+ // Used in `Type`.
+@@ -91,10 +97,11 @@
+         target_os = "horizon"
+     ))
+ ))]
++#[cfg(not(target_os = "hermit"))]
+ pub(crate) use libc::SOCK_RAW;
+ #[cfg(all(
+     feature = "all",
+-    not(any(target_os = "espidf", target_os = "wasi", target_os = "horizon"))
++    not(any(target_os = "espidf", target_os = "wasi", target_os = "horizon", target_os = "hermit"))
+ ))]
+ pub(crate) use libc::SOCK_SEQPACKET;
+ pub(crate) use libc::{SOCK_DGRAM, SOCK_STREAM};
+@@ -115,7 +122,7 @@
+     )
+ ))]
+ pub(crate) use libc::IPPROTO_UDPLITE;
+-#[cfg(not(target_os = "wasi"))]
++#[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+ pub(crate) use libc::{IPPROTO_ICMP, IPPROTO_ICMPV6};
+ pub(crate) use libc::{IPPROTO_TCP, IPPROTO_UDP};
+ // Used in `SockAddr`.
+@@ -129,10 +136,11 @@
+     target_os = "redox",
+     target_os = "espidf",
+     target_os = "wasi",
+-    target_os = "horizon"
++    target_os = "horizon",
++    target_os = "hermit"
+ )))]
+ pub(crate) use libc::MSG_TRUNC;
+-#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "hermit")))]
+ pub(crate) use libc::SO_OOBINLINE;
+ // Used in `Socket`.
+ #[cfg(not(target_os = "nto"))]
+@@ -149,6 +157,7 @@
+         target_os = "netbsd",
+         target_os = "openbsd",
+         target_os = "redox",
++        target_os = "hermit",
+         target_os = "solaris",
+         target_os = "haiku",
+         target_os = "espidf",
+@@ -172,7 +181,8 @@
+     target_os = "espidf",
+     target_os = "vita",
+     target_os = "wasi",
+-    target_os = "horizon"
++    target_os = "horizon",
++    target_os = "hermit"
+ )))]
+ pub(crate) use libc::IPV6_RECVTCLASS;
+ #[cfg(all(
+@@ -184,6 +194,7 @@
+         target_os = "horizon"
+     ))
+ ))]
++#[cfg(not(target_os = "hermit"))]
+ pub(crate) use libc::IP_HDRINCL;
+ #[cfg(not(any(
+     target_os = "aix",
+@@ -201,7 +212,8 @@
+     target_os = "vita",
+     target_os = "wasi",
+     target_os = "cygwin",
+-    target_os = "horizon"
++    target_os = "horizon",
++    target_os = "hermit"
+ )))]
+ pub(crate) use libc::IP_RECVTOS;
+ #[cfg(not(any(
+@@ -236,6 +248,7 @@
+     any(target_os = "linux", target_os = "android", target_os = "fuchsia")
+ ))]
+ pub(crate) use libc::SO_PRIORITY;
++#[cfg(unix)]
+ pub(crate) use libc::{
+     ip_mreq as IpMreq, linger, IPPROTO_IP, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, IPV6_UNICAST_HOPS,
+     IPV6_V6ONLY, IP_ADD_MEMBERSHIP, IP_DROP_MEMBERSHIP, IP_MULTICAST_LOOP, IP_MULTICAST_TTL,
+@@ -254,11 +267,17 @@
+     target_os = "espidf",
+     target_os = "vita",
+     target_os = "wasi",
+-    target_os = "horizon"
++    target_os = "horizon",
++    target_os = "hermit"
+ )))]
+ pub(crate) use libc::{
+     ip_mreq_source as IpMreqSource, IP_ADD_SOURCE_MEMBERSHIP, IP_DROP_SOURCE_MEMBERSHIP,
+ };
++pub(crate) use libc::{linger, IPPROTO_IP, SO_KEEPALIVE, SO_RCVBUF, SO_RCVTIMEO, SO_SNDBUF};
++pub(crate) use libc::{
++    IPPROTO_IPV6, MSG_PEEK, SOL_SOCKET, SO_BROADCAST, SO_ERROR, SO_REUSEADDR, SO_SNDTIMEO,
++    TCP_NODELAY,
++};
+ #[cfg(not(any(
+     target_os = "dragonfly",
+     target_os = "freebsd",
+@@ -294,7 +313,7 @@
+ pub(crate) use libc::{
+     IPV6_JOIN_GROUP as IPV6_ADD_MEMBERSHIP, IPV6_LEAVE_GROUP as IPV6_DROP_MEMBERSHIP,
+ };
+-#[cfg(not(target_os = "wasi"))]
++#[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+ pub(crate) use libc::{IPV6_MULTICAST_HOPS, IPV6_MULTICAST_IF, IP_MULTICAST_IF, MSG_OOB};
+ #[cfg(all(
+     feature = "all",
+@@ -339,6 +358,7 @@
+     target_os = "tvos",
+     target_os = "watchos",
+     target_os = "vita",
++    target_os = "hermit",
+ )))]
+ use libc::TCP_KEEPIDLE as KEEPALIVE_TIME;
+ 
+@@ -346,7 +366,35 @@
+ macro_rules! syscall {
+     ($fn: ident ( $($arg: expr),* $(,)* ) ) => {{
+         #[allow(unused_unsafe)]
++        #[cfg(target_os = "hermit")]
++        let res = unsafe { i32::try_from(libc::$fn($($arg, )*)).unwrap() };
++        #[cfg(target_os = "hermit")]
++        if res < 0 {
++            let e = match -res {
++                libc::errno::EACCES => std::io::ErrorKind::PermissionDenied,
++                libc::errno::EADDRINUSE => std::io::ErrorKind::AddrInUse,
++                libc::errno::EADDRNOTAVAIL => std::io::ErrorKind::AddrNotAvailable,
++                libc::errno::EAGAIN => std::io::ErrorKind::WouldBlock,
++                libc::errno::ECONNABORTED => std::io::ErrorKind::ConnectionAborted,
++                libc::errno::ECONNREFUSED => std::io::ErrorKind::ConnectionRefused,
++                libc::errno::ECONNRESET => std::io::ErrorKind::ConnectionReset,
++                libc::errno::EEXIST => std::io::ErrorKind::AlreadyExists,
++                libc::errno::EINTR => std::io::ErrorKind::Interrupted,
++                libc::errno::EINVAL => std::io::ErrorKind::InvalidInput,
++                libc::errno::ENOENT => std::io::ErrorKind::NotFound,
++                libc::errno::ENOTCONN => std::io::ErrorKind::NotConnected,
++                libc::errno::EPERM => std::io::ErrorKind::PermissionDenied,
++                libc::errno::EPIPE => std::io::ErrorKind::BrokenPipe,
++                libc::errno::ETIMEDOUT => std::io::ErrorKind::TimedOut,
++                _ => return Err(std::io::Error::from_raw_os_error(-res)),
++            };
++            Err(std::io::Error::from(e))
++        } else {
++            Ok(res)
++        }
++        #[cfg(unix)]
+         let res = unsafe { libc::$fn($($arg, )*) };
++        #[cfg(unix)]
+         if res == -1 {
+             Err(std::io::Error::last_os_error())
+         } else {
+@@ -449,12 +497,13 @@
+     Domain,
+     libc::AF_INET,
+     libc::AF_INET6,
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     libc::AF_UNIX,
+     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+     libc::AF_PACKET,
+     #[cfg(any(target_os = "android", target_os = "linux"))]
+     libc::AF_VSOCK,
++    #[cfg(not(target_os = "hermit"))]
+     libc::AF_UNSPEC, // = 0.
+ );
+ 
+@@ -531,7 +580,8 @@
+         target_os = "redox",
+         target_os = "espidf",
+         target_os = "wasi",
+-        target_os = "horizon"
++        target_os = "horizon",
++        target_os = "hermit"
+     )))]
+     libc::SOCK_RAW,
+     #[cfg(not(any(
+@@ -539,10 +589,11 @@
+         target_os = "haiku",
+         target_os = "espidf",
+         target_os = "wasi",
+-        target_os = "horizon"
++        target_os = "horizon",
++        target_os = "hermit"
+     )))]
+     libc::SOCK_RDM,
+-    #[cfg(not(any(target_os = "espidf", target_os = "wasi", target_os = "horizon")))]
++    #[cfg(not(any(target_os = "espidf", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+     libc::SOCK_SEQPACKET,
+     /* TODO: add these optional bit OR-ed flags:
+     #[cfg(any(
+@@ -570,9 +621,9 @@
+ 
+ impl_debug!(
+     Protocol,
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     libc::IPPROTO_ICMP,
+-    #[cfg(not(target_os = "wasi"))]
++    #[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+     libc::IPPROTO_ICMPV6,
+     libc::IPPROTO_TCP,
+     libc::IPPROTO_UDP,
+@@ -597,7 +648,7 @@
+ );
+ 
+ /// Unix-only API.
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ impl RecvFlags {
+     /// Check if the message terminates a record.
+     ///
+@@ -650,7 +701,7 @@
+     }
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ impl std::fmt::Debug for RecvFlags {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         let mut s = f.debug_struct("RecvFlags");
+@@ -671,15 +722,19 @@
+ }
+ 
+ #[repr(transparent)]
++#[cfg(not(target_os = "hermit"))]
+ pub struct MaybeUninitSlice<'a> {
+     vec: libc::iovec,
+     _lifetime: PhantomData<&'a mut [MaybeUninit<u8>]>,
+ }
+ 
++#[cfg(not(target_os = "hermit"))]
+ unsafe impl<'a> Send for MaybeUninitSlice<'a> {}
+ 
++#[cfg(not(target_os = "hermit"))]
+ unsafe impl<'a> Sync for MaybeUninitSlice<'a> {}
+ 
++#[cfg(not(target_os = "hermit"))]
+ impl<'a> MaybeUninitSlice<'a> {
+     pub(crate) fn new(buf: &'a mut [MaybeUninit<u8>]) -> MaybeUninitSlice<'a> {
+         MaybeUninitSlice {
+@@ -701,7 +756,7 @@
+ }
+ 
+ /// Returns the offset of the `sun_path` member of the passed unix socket address.
+-#[cfg(not(target_os = "wasi"))]
++#[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+ pub(crate) fn offset_of_path(storage: &libc::sockaddr_un) -> usize {
+     let base = storage as *const _ as usize;
+     let path = ptr::addr_of!(storage.sun_path) as usize;
+@@ -710,6 +765,7 @@
+ 
+ #[cfg(not(target_os = "wasi"))]
+ #[allow(unsafe_op_in_unsafe_fn)]
++#[cfg(not(target_os = "hermit"))]
+ pub(crate) fn unix_sockaddr(path: &Path) -> io::Result<SockAddr> {
+     let mut storage = SockAddrStorage::zeroed();
+     let len = {
+@@ -755,39 +811,39 @@
+ }
+ 
+ // Used in `MsgHdr`.
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ pub(crate) use libc::msghdr;
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ pub(crate) fn set_msghdr_name(msg: &mut msghdr, name: &SockAddr) {
+     msg.msg_name = name.as_ptr() as *mut _;
+     msg.msg_namelen = name.len();
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ #[allow(clippy::unnecessary_cast)] // IovLen type can be `usize`.
+ pub(crate) fn set_msghdr_iov(msg: &mut msghdr, ptr: *mut libc::iovec, len: usize) {
+     msg.msg_iov = ptr;
+     msg.msg_iovlen = min(len, IovLen::MAX as usize) as IovLen;
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ pub(crate) fn set_msghdr_control(msg: &mut msghdr, ptr: *mut libc::c_void, len: usize) {
+     msg.msg_control = ptr;
+     msg.msg_controllen = len as _;
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ pub(crate) fn set_msghdr_flags(msg: &mut msghdr, flags: c_int) {
+     msg.msg_flags = flags;
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ pub(crate) fn msghdr_flags(msg: &msghdr) -> RecvFlags {
+     RecvFlags(msg.msg_flags)
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ pub(crate) fn msghdr_control_len(msg: &msghdr) -> usize {
+     msg.msg_controllen as _
+ }
+@@ -833,6 +889,7 @@
+ impl SockAddr {
+     /// Returns true if this address is an unnamed address from the `AF_UNIX` family (for local
+     /// interprocess communication), false otherwise.
++    #[cfg(not(target_os = "hermit"))]
+     pub fn is_unnamed(&self) -> bool {
+         self.as_sockaddr_un()
+             .map(|storage| {
+@@ -849,6 +906,7 @@
+ 
+     /// Returns the underlying `sockaddr_un` object if this address is from the `AF_UNIX` family,
+     /// otherwise returns `None`.
++    #[cfg(not(target_os = "hermit"))]
+     pub(crate) fn as_sockaddr_un(&self) -> Option<&libc::sockaddr_un> {
+         self.is_unix().then(|| {
+             // SAFETY: if unix socket, i.e. the `ss_family` field is `AF_UNIX` then storage must be
+@@ -861,6 +919,7 @@
+     /// (for abstract names) null byte.
+     ///
+     /// Should not be called on unnamed addresses.
++    #[cfg(not(target_os = "hermit"))]
+     fn path_len(&self, storage: &libc::sockaddr_un) -> usize {
+         debug_assert!(!self.is_unnamed());
+         self.len() as usize - offset_of_path(storage) - 1
+@@ -869,6 +928,7 @@
+     /// Get a u8 slice for the bytes of the pathname or abstract name.
+     ///
+     /// Should not be called on unnamed addresses.
++    #[cfg(not(target_os = "hermit"))]
+     fn path_bytes(&self, storage: &libc::sockaddr_un, abstract_name: bool) -> &[u8] {
+         debug_assert!(!self.is_unnamed());
+         // SAFETY: the pointed objects of type `i8` have the same memory layout as `u8`. The path is
+@@ -888,6 +948,7 @@
+ 
+     /// Returns this address as Unix `SocketAddr` if it is an `AF_UNIX` pathname
+     /// address, otherwise returns `None`.
++    #[cfg(not(target_os = "hermit"))]
+     pub fn as_unix(&self) -> Option<std::os::unix::net::SocketAddr> {
+         let path = self.as_pathname()?;
+         // SAFETY: we can represent this as a valid pathname, then so can the
+@@ -897,6 +958,7 @@
+ 
+     /// Returns this address as a `Path` reference if it is an `AF_UNIX`
+     /// pathname address, otherwise returns `None`.
++    #[cfg(not(target_os = "hermit"))]
+     pub fn as_pathname(&self) -> Option<&Path> {
+         self.as_sockaddr_un().and_then(|storage| {
+             (self.len() > offset_of_path(storage) as _ && storage.sun_path[0] != 0).then(|| {
+@@ -1022,7 +1084,7 @@
+         .map(|(_, addr)| addr)
+ }
+ 
+-#[cfg(not(target_os = "wasi"))]
++#[cfg(not(any(target_os = "wasi", target_os = "hermit")))]
+ pub(crate) fn try_clone(fd: RawSocket) -> io::Result<RawSocket> {
+     syscall!(fcntl(fd, libc::F_DUPFD_CLOEXEC, 0))
+ }
+@@ -1065,6 +1127,7 @@
+     }
+ }
+ 
++#[cfg(not(target_os = "hermit"))]
+ pub(crate) fn shutdown(fd: RawSocket, how: Shutdown) -> io::Result<()> {
+     let how = match how {
+         Shutdown::Write => libc::SHUT_WR,
+@@ -1074,6 +1137,20 @@
+     syscall!(shutdown(fd, how)).map(|_| ())
+ }
+ 
++#[cfg(target_os = "hermit")]
++pub(crate) fn shutdown(fd: RawSocket, how: Shutdown) -> io::Result<()> {
++    let how = match how {
++        Shutdown::Write => libc::SHUT_WR,
++        Shutdown::Read => libc::SHUT_RD,
++        Shutdown::Both => libc::SHUT_RDWR,
++    };
++    unsafe {
++        libc::shutdown_socket(fd, how);
++    }
++
++    Ok(())
++}
++
+ pub(crate) fn recv(fd: RawSocket, buf: &mut [MaybeUninit<u8>], flags: c_int) -> io::Result<usize> {
+     syscall!(recv(
+         fd,
+@@ -1114,7 +1191,7 @@
+     Ok(sender)
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ pub(crate) fn recv_vectored(
+     fd: RawSocket,
+     bufs: &mut [crate::MaybeUninitSlice<'_>],
+@@ -1125,7 +1202,7 @@
+     Ok((n, msg.flags()))
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ pub(crate) fn recv_from_vectored(
+     fd: RawSocket,
+     bufs: &mut [crate::MaybeUninitSlice<'_>],
+@@ -1147,7 +1224,7 @@
+     Ok((n, msg.flags(), addr))
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ pub(crate) fn recvmsg(
+     fd: RawSocket,
+     msg: &mut MsgHdrMut<'_, '_, '_>,
+@@ -1166,7 +1243,7 @@
+     .map(|n| n as usize)
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ pub(crate) fn send_vectored(
+     fd: RawSocket,
+     bufs: &[IoSlice<'_>],
+@@ -1193,7 +1270,7 @@
+     .map(|n| n as usize)
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ pub(crate) fn send_to_vectored(
+     fd: RawSocket,
+     bufs: &[IoSlice<'_>],
+@@ -1204,7 +1281,7 @@
+     sendmsg(fd, &msg, flags)
+ }
+ 
+-#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon")))]
++#[cfg(not(any(target_os = "redox", target_os = "wasi", target_os = "horizon", target_os = "hermit")))]
+ pub(crate) fn sendmsg(fd: RawSocket, msg: &MsgHdr<'_, '_, '_>, flags: c_int) -> io::Result<usize> {
+     syscall!(sendmsg(fd, &msg.inner, flags)).map(|n| n as usize)
+ }
+@@ -1252,7 +1329,12 @@
+ 
+ #[cfg(all(
+     feature = "all",
+-    not(any(target_os = "haiku", target_os = "openbsd", target_os = "vita"))
++    not(any(
++        target_os = "haiku",
++        target_os = "openbsd",
++        target_os = "hermit",
++        target_os = "vita"
++    ))
+ ))]
+ pub(crate) fn tcp_keepalive_time(fd: RawSocket) -> io::Result<Duration> {
+     unsafe {
+@@ -1267,7 +1349,8 @@
+         target_os = "haiku",
+         target_os = "openbsd",
+         target_os = "nto",
+-        target_os = "vita"
++        target_os = "vita",
++        target_os = "hermit",
+     )))]
+     if let Some(time) = keepalive.time {
+         let secs = into_secs(time);
+@@ -1323,11 +1406,16 @@
+ }
+ 
+ /// Get the flags using `cmd`.
+-#[cfg(not(target_os = "vita"))]
++#[cfg(not(any(target_os = "vita", target_os = "hermit")))]
+ fn fcntl_get(fd: RawSocket, cmd: c_int) -> io::Result<c_int> {
+     syscall!(fcntl(fd, cmd))
+ }
+ 
++#[cfg(target_os = "hermit")]
++fn fcntl_get(fd: RawSocket, cmd: c_int) -> io::Result<c_int> {
++    Ok(unsafe { libc::fcntl(fd, cmd, 0) })
++}
++
+ /// Add `flag` to the current set flags of `F_GETFD`.
+ #[cfg(not(target_os = "vita"))]
+ fn fcntl_add(fd: RawSocket, get_cmd: c_int, set_cmd: c_int, flag: c_int) -> io::Result<()> {
+@@ -1426,7 +1514,8 @@
+     target_os = "vita",
+     target_os = "cygwin",
+     target_os = "wasi",
+-    target_os = "horizon"
++    target_os = "horizon",
++    target_os = "hermit"
+ )))]
+ pub(crate) const fn to_mreqn(
+     multiaddr: &Ipv4Addr,
+@@ -1640,7 +1729,7 @@
+     /// For more information about this option, see [`set_tcp_mss`].
+     ///
+     /// [`set_tcp_mss`]: crate::Socket::set_tcp_mss
+-    #[cfg(all(feature = "all", not(any(target_os = "redox", target_os = "wasi"))))]
++    #[cfg(all(feature = "all", not(any(target_os = "redox", target_os = "wasi", target_os = "hermit"))))]
+     pub fn tcp_mss(&self) -> io::Result<u32> {
+         unsafe {
+             getsockopt::<c_int>(self.as_raw(), libc::IPPROTO_TCP, libc::TCP_MAXSEG)
+@@ -1652,7 +1741,7 @@
+     ///
+     /// The `TCP_MAXSEG` option denotes the TCP Maximum Segment Size and is only
+     /// available on TCP sockets.
+-    #[cfg(all(feature = "all", not(any(target_os = "redox", target_os = "wasi"))))]
++    #[cfg(all(feature = "all", not(any(target_os = "redox", target_os = "wasi", target_os = "hermit"))))]
+     pub fn set_tcp_mss(&self, mss: u32) -> io::Result<()> {
+         unsafe {
+             setsockopt(
+@@ -2208,6 +2297,7 @@
+             target_os = "wasi"
+         ))
+     ))]
++    #[cfg(not(target_os = "hermit"))]
+     pub fn reuse_port(&self) -> io::Result<bool> {
+         unsafe {
+             getsockopt::<c_int>(self.as_raw(), libc::SOL_SOCKET, libc::SO_REUSEPORT)
+@@ -2229,6 +2319,7 @@
+             target_os = "wasi"
+         ))
+     ))]
++    #[cfg(not(target_os = "hermit"))]
+     pub fn set_reuse_port(&self, reuse: bool) -> io::Result<()> {
+         unsafe {
+             setsockopt(
