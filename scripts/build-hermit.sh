@@ -11,6 +11,9 @@
 #     and /dev/kvm. See docs/BUILD.md for the boot command.
 set -euo pipefail
 
+# Ensure cargo/rustup are on PATH (needed in detached/CI/non-login shells).
+source "$HOME/.cargo/env" 2>/dev/null || true
+
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$HERE/relay"
 

@@ -102,7 +102,7 @@ debug = true
 [patch.crates-io]
 web-transport-quinn = { path = "../vendor/web-transport-quinn-hermit" }
 socket2 = { path = "../vendor/socket2-hermit" }
-tokio = { path = "../vendor/tokio-fork" }
+tokio = { path = "../vendor/tokio-fork/tokio" }
 netdev = { path = "../vendor/netdev-hermit" }
 rustls-platform-verifier = { path = "../vendor/rpv-hermit" }
 noq-udp = { path = "../vendor/noq-udp-hermit" }
