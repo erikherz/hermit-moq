@@ -1,0 +1,30 @@
+diff -ruN '--exclude=target' netwatch-0.19.1/build.rs /root/iroh-spike/vendor/netwatch-hermit/build.rs
+--- netwatch-0.19.1/build.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/netwatch-hermit/build.rs	2026-07-12 23:49:40.503912943 +0000
+@@ -6,6 +6,6 @@
+         // Convenience aliases
+         wasm_browser: { all(target_family = "wasm", target_os = "unknown") },
+         // Limited POSIX platforms (not wasm)
+-        posix_minimal: { target_os = "espidf" },
++        posix_minimal: { any(target_os = "espidf", target_os = "hermit") },
+     }
+ }
+diff -ruN '--exclude=target' netwatch-0.19.1/Cargo.toml /root/iroh-spike/vendor/netwatch-hermit/Cargo.toml
+--- netwatch-0.19.1/Cargo.toml	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/netwatch-hermit/Cargo.toml	2026-07-12 23:49:40.501088479 +0000
+@@ -228,3 +228,5 @@
+     "cfg(iroh_docsrs)",
+     "cfg(skip_patchbay)",
+ ]
++
+diff -ruN '--exclude=target' netwatch-0.19.1/src/udp.rs /root/iroh-spike/vendor/netwatch-hermit/src/udp.rs
+--- netwatch-0.19.1/src/udp.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/netwatch-hermit/src/udp.rs	2026-07-12 23:49:40.516485054 +0000
+@@ -783,6 +783,7 @@
+         }
+         if network == IpFamily::V6 {
+             // Avoid dualstack
++            #[cfg(not(target_os = "hermit"))]
+             socket.set_only_v6(true)?;
+         }
+ 

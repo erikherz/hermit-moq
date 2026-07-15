@@ -1,0 +1,28 @@
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   Copyright 2026 Vivoh, Inc.
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+---
+NOTE: This is the short-form Apache-2.0 header. Before publishing, replace this
+file with the full canonical Apache License 2.0 text from
+https://www.apache.org/licenses/LICENSE-2.0.txt
+
+Also note (see UPSTREAM.md): individual files under patches/ are derivatives of
+their respective upstream projects and are governed by those projects' licenses,
+not solely by this repository's license. In particular, patches/hermit-ecosystem/
+ring-hermit.patch derives from `ring`, which is NOT Apache/MIT — review before
+redistribution.

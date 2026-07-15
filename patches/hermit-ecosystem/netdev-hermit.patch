@@ -1,0 +1,69 @@
+diff -ruN '--exclude=target' netdev-0.45.0/Cargo.toml /root/iroh-spike/vendor/netdev-hermit/Cargo.toml
+--- netdev-0.45.0/Cargo.toml	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/netdev-hermit/Cargo.toml	2026-07-12 23:37:32.958924996 +0000
+@@ -161,3 +161,5 @@
+     "Win32_Networking_WinSock",
+     "Win32_NetworkManagement_Ndis",
+ ]
++
+diff -ruN '--exclude=target' netdev-0.45.0/src/interface/flags.rs /root/iroh-spike/vendor/netdev-hermit/src/interface/flags.rs
+--- netdev-0.45.0/src/interface/flags.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/netdev-hermit/src/interface/flags.rs	2026-07-12 23:37:32.978944448 +0000
+@@ -15,3 +15,20 @@
+ 
+ #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
+ pub use crate::os::bsd::flags::*;
++
++#[cfg(target_os = "hermit")]
++mod hermit_flags {
++    use crate::interface::interface::Interface;
++    pub const IFF_UP: i32 = 0x1;
++    pub const IFF_BROADCAST: i32 = 0x2;
++    pub const IFF_LOOPBACK: i32 = 0x8;
++    pub const IFF_POINTOPOINT: i32 = 0x10;
++    pub const IFF_RUNNING: i32 = 0x40;
++    pub const IFF_MULTICAST: i32 = 0x1000;
++    pub fn is_running(interface: &Interface) -> bool {
++        interface.flags & (IFF_RUNNING as u32) != 0
++    }
++    pub fn is_physical_interface(_interface: &Interface) -> bool { false }
++}
++#[cfg(target_os = "hermit")]
++pub use hermit_flags::*;
+diff -ruN '--exclude=target' netdev-0.45.0/src/interface/mod.rs /root/iroh-spike/vendor/netdev-hermit/src/interface/mod.rs
+--- netdev-0.45.0/src/interface/mod.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/netdev-hermit/src/interface/mod.rs	2026-07-12 23:37:32.979049147 +0000
+@@ -87,6 +87,8 @@
+ }
+ 
+ pub(crate) fn interfaces() -> Vec<Interface> {
++    #[cfg(target_os = "hermit")]
++    { return Vec::new(); }
+     #[cfg(target_os = "linux")]
+     {
+         crate::os::linux::interface::interfaces()
+diff -ruN '--exclude=target' netdev-0.45.0/src/interface/state.rs /root/iroh-spike/vendor/netdev-hermit/src/interface/state.rs
+--- netdev-0.45.0/src/interface/state.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/netdev-hermit/src/interface/state.rs	2026-07-12 23:37:32.979144479 +0000
+@@ -100,6 +100,8 @@
+ /// This function performs a fresh OS query and does not rely on a previously collected
+ /// snapshot.
+ pub fn operstate(if_name: &str) -> OperState {
++    #[cfg(target_os = "hermit")]
++    { let _ = if_name; return OperState::Unknown; }
+     #[cfg(target_os = "linux")]
+     {
+         crate::os::linux::state::operstate(if_name)
+diff -ruN '--exclude=target' netdev-0.45.0/src/interface/types.rs /root/iroh-spike/vendor/netdev-hermit/src/interface/types.rs
+--- netdev-0.45.0/src/interface/types.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/netdev-hermit/src/interface/types.rs	2026-07-12 23:42:39.642554891 +0000
+@@ -124,6 +124,9 @@
+     ///
+     /// For variants that have no direct mapping on the current platform, this method returns
+     /// `u32::MAX`.
++    #[cfg(target_os = "hermit")]
++    pub fn value(&self) -> u32 { u32::MAX }
++
+     #[cfg(any(target_os = "linux", target_os = "android"))]
+     pub fn value(&self) -> u32 {
+         use crate::os::linux::arp;

@@ -1,0 +1,19 @@
+diff -ruN '--exclude=target' ring-0.17.14/build.rs /root/iroh-spike/vendor/ring-hermit/build.rs
+--- ring-0.17.14/build.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/ring-hermit/build.rs	2026-07-13 00:00:46.786960662 +0000
+@@ -242,6 +242,7 @@
+ /// Operating systems that have the same ABI as Linux on every architecture
+ /// mentioned in `ASM_TARGETS`.
+ const LINUX_ABI: &[&str] = &[
++    "hermit",
+     "android",
+     "dragonfly",
+     "freebsd",
+diff -ruN '--exclude=target' ring-0.17.14/Cargo.toml /root/iroh-spike/vendor/ring-hermit/Cargo.toml
+--- ring-0.17.14/Cargo.toml	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/ring-hermit/Cargo.toml	2026-07-13 00:00:46.784235828 +0000
+@@ -292,3 +292,5 @@
+ debug = 0
+ debug-assertions = false
+ rpath = false
++

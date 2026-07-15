@@ -1,0 +1,25 @@
+diff --git a/src/executor/mod.rs b/src/executor/mod.rs
+index 44a3e144..12399405 100644
+--- a/src/executor/mod.rs
++++ b/src/executor/mod.rs
+@@ -162,8 +162,18 @@ where
+ 		}
+ 
+ 		if backoff.is_completed() {
+-			let wakeup_time =
+-				timeout.map(|duration| start + u64::try_from(duration.as_micros()).unwrap());
++			// futex_wait_and_set (via TaskNotify::wait) treats the value as a RELATIVE
++			// offset added to get_timer_ticks() (uptime micros). `start`/`now` are
++			// now_micros() = wall-clock micros, so `start + duration` is a wall-clock
++			// ABSOLUTE value and must NOT be passed as a relative offset (that waits
++			// ~uptime-since-epoch micros == effectively forever). Pass the remaining
++			// duration relative to now instead.
++			let wakeup_time = timeout.map(|duration| {
++				let elapsed = now - start;
++				u64::try_from(duration.as_micros())
++					.unwrap()
++					.saturating_sub(elapsed)
++			});
+ 
+ 			// switch to another task
+ 			task_notify.wait(wakeup_time);

@@ -1,0 +1,97 @@
+diff -ruN '--exclude=target' noq-udp-1.0.1/build.rs /root/iroh-spike/vendor/noq-udp-hermit/build.rs
+--- noq-udp-1.0.1/build.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/noq-udp-hermit/build.rs	2026-07-12 23:40:17.040690955 +0000
+@@ -31,6 +31,6 @@
+         apple_slow: { all(apple, not(feature = "fast-apple-datapath")) },
+         wasm_browser: { all(target_family = "wasm", target_os = "unknown") },
+         // Unix-family platforms that lack advanced socket APIs (cmsg, recvmmsg, etc.)
+-        posix_minimal: { target_os = "espidf" },
++        posix_minimal: { any(target_os = "espidf", target_os = "hermit") },
+     }
+ }
+diff -ruN '--exclude=target' noq-udp-1.0.1/Cargo.toml /root/iroh-spike/vendor/noq-udp-hermit/Cargo.toml
+--- noq-udp-1.0.1/Cargo.toml	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/noq-udp-hermit/Cargo.toml	2026-07-12 23:40:17.036962206 +0000
+@@ -129,3 +129,5 @@
+ level = "warn"
+ priority = 0
+ check-cfg = ["cfg(fuzzing)"]
++
+diff -ruN '--exclude=target' noq-udp-1.0.1/src/lib.rs /root/iroh-spike/vendor/noq-udp-hermit/src/lib.rs
+--- noq-udp-1.0.1/src/lib.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/noq-udp-hermit/src/lib.rs	2026-07-12 23:49:40.491677032 +0000
+@@ -30,6 +30,8 @@
+ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+ #[cfg(unix)]
+ use std::os::unix::io::AsFd;
++#[cfg(target_os = "hermit")]
++use std::os::hermit::io::AsFd;
+ #[cfg(windows)]
+ use std::os::windows::io::AsSocket;
+ #[cfg(not(wasm_browser))]
+@@ -213,7 +215,7 @@
+ #[cfg(not(wasm_browser))]
+ pub struct UdpSockRef<'a>(socket2::SockRef<'a>);
+ 
+-#[cfg(unix)]
++#[cfg(any(unix, target_os = "hermit"))]
+ impl<'s, S> From<&'s S> for UdpSockRef<'s>
+ where
+     S: AsFd,
+diff -ruN '--exclude=target' noq-udp-1.0.1/src/posix_minimal.rs /root/iroh-spike/vendor/noq-udp-hermit/src/posix_minimal.rs
+--- noq-udp-1.0.1/src/posix_minimal.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/noq-udp-hermit/src/posix_minimal.rs	2026-07-12 23:46:14.914153423 +0000
+@@ -63,19 +63,40 @@
+         // same layout, that of `iovec`/`WSABUF`. Furthermore `recv_vectored`
+         // promises to not write uninitialised bytes to the `bufs` and pass it
+         // directly to the `recvmsg` system call, so this is safe.
+-        let bufs = unsafe {
+-            &mut *(bufs as *mut [IoSliceMut<'_>] as *mut [socket2::MaybeUninitSlice<'_>])
+-        };
+-        let (len, _flags, addr) = socket.0.recv_from_vectored(bufs)?;
+-        meta[0] = RecvMeta {
+-            len,
+-            stride: len,
+-            addr: addr.as_socket().unwrap(),
+-            ecn: None,
+-            dst_ip: None,
+-            interface_index: None,
+-        };
+-        Ok(1)
++        #[cfg(target_os = "hermit")]
++        {
++            // hermit: no recvmsg/vectored datapath; single-buffer recv_from (BATCH_SIZE == 1)
++            let first = &mut bufs[0];
++            let raw: &mut [u8] = &mut *first;
++            let uninit: &mut [std::mem::MaybeUninit<u8>] =
++                unsafe { &mut *(raw as *mut [u8] as *mut [std::mem::MaybeUninit<u8>]) };
++            let (len, addr) = socket.0.recv_from(uninit)?;
++            meta[0] = RecvMeta {
++                len,
++                stride: len,
++                addr: addr.as_socket().unwrap(),
++                ecn: None,
++                dst_ip: None,
++                interface_index: None,
++            };
++            return Ok(1);
++        }
++        #[cfg(not(target_os = "hermit"))]
++        {
++            let bufs = unsafe {
++                &mut *(bufs as *mut [IoSliceMut<'_>] as *mut [socket2::MaybeUninitSlice<'_>])
++            };
++            let (len, _flags, addr) = socket.0.recv_from_vectored(bufs)?;
++            meta[0] = RecvMeta {
++                len,
++                stride: len,
++                addr: addr.as_socket().unwrap(),
++                ecn: None,
++                dst_ip: None,
++                interface_index: None,
++            };
++            return Ok(1);
++        }
+     }
+ 
+     #[inline]

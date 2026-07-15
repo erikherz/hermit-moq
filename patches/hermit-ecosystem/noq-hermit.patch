@@ -1,0 +1,27 @@
+diff -ruN '--exclude=target' noq-1.0.1/Cargo.toml /root/iroh-spike/vendor/noq-hermit/Cargo.toml
+--- noq-1.0.1/Cargo.toml	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/noq-hermit/Cargo.toml	2026-07-12 23:52:35.268923005 +0000
+@@ -358,3 +358,5 @@
+ level = "warn"
+ priority = 0
+ check-cfg = ["cfg(fuzzing)"]
++
+diff -ruN '--exclude=target' noq-1.0.1/src/endpoint.rs /root/iroh-spike/vendor/noq-hermit/src/endpoint.rs
+--- noq-1.0.1/src/endpoint.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/noq-hermit/src/endpoint.rs	2026-07-12 23:52:35.281832684 +0000
+@@ -85,6 +85,7 @@
+     ))]
+     pub fn client(addr: SocketAddr) -> io::Result<Self> {
+         let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
++        #[cfg(not(target_os = "hermit"))]
+         if addr.is_ipv6()
+             && let Err(e) = socket.set_only_v6(false)
+         {
+@@ -127,6 +128,7 @@
+     ))]
+     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
+         let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
++        #[cfg(not(target_os = "hermit"))]
+         if addr.is_ipv6()
+             && let Err(e) = socket.set_only_v6(false)
+         {

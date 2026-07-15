@@ -1,0 +1,198 @@
+#[cfg(feature = "alloc-stats")]
+mod alloc_stats;
+#[cfg(feature = "net")]
+pub(crate) mod device;
+#[cfg(feature = "net")]
+pub(crate) mod network;
+pub(crate) mod task;
+#[cfg(feature = "virtio-vsock")]
+pub(crate) mod vsock;
+
+use alloc::sync::Arc;
+use alloc::task::Wake;
+use core::pin::pin;
+use core::sync::atomic::AtomicU32;
+use core::task::{Context, Poll, Waker};
+use core::time::Duration;
+
+use crossbeam_utils::Backoff;
+use hermit_sync::without_interrupts;
+
+use crate::arch::kernel::core_local;
+use crate::errno::Errno;
+use crate::executor::task::AsyncTask;
+use crate::io;
+use crate::synch::futex::*;
+
+/// WakerRegistration is derived from smoltcp's
+/// implementation.
+#[derive(Debug)]
+pub(crate) struct WakerRegistration {
+	waker: Option<Waker>,
+}
+
+impl WakerRegistration {
+	pub const fn new() -> Self {
+		Self { waker: None }
+	}
+
+	/// Register a waker. Overwrites the previous waker, if any.
+	pub fn register(&mut self, w: &Waker) {
+		match self.waker {
+			// Optimization: If both the old and new Wakers wake the same task, we can simply
+			// keep the old waker, skipping the clone.
+			Some(ref w2) if (w2.will_wake(w)) => {}
+			// In all other cases
+			// - we have no waker registered
+			// - we have a waker registered but it's for a different task.
+			// then clone the new waker and store it
+			_ => self.waker = Some(w.clone()),
+		}
+	}
+
+	/// Wake the registered waker, if any.
+	#[allow(dead_code)]
+	pub fn wake(&mut self) {
+		let Some(w) = self.waker.take() else {
+			return;
+		};
+
+		w.wake();
+	}
+}
+
+struct TaskNotify {
+	/// Futex to wakeup a single task
+	futex: AtomicU32,
+}
+
+impl TaskNotify {
+	pub const fn new() -> Self {
+		Self {
+			futex: AtomicU32::new(0),
+		}
+	}
+
+	pub fn wait(&self, timeout: Option<u64>) {
+		// Wait for a futex and reset the value to zero. If the value
+		// is not zero, someone already wanted to wakeup a task and stored another
+		// value to the futex address. In this case, the function directly returns
+		// and doesn't block.
+		let _ = futex_wait_and_set(&self.futex, 0, timeout, Flags::RELATIVE, 0);
+	}
+}
+
+impl Wake for TaskNotify {
+	fn wake(self: Arc<Self>) {
+		self.wake_by_ref();
+	}
+
+	fn wake_by_ref(self: &Arc<Self>) {
+		let _ = futex_wake_or_set(&self.futex, 1, u32::MAX);
+	}
+}
+
+pub(crate) fn run() {
+	without_interrupts(|| {
+		// FIXME: We currently have no more than 3 tasks at a time, so this is fine.
+		// Ideally, we would set this value to 200, but the network task currently immediately wakes up again.
+		// This would lead to the network task being polled 200 times back to back, slowing things down considerably.
+		for _ in 0..3 {
+			if !core_local::ex().try_tick() {
+				break;
+			}
+		}
+	});
+}
+
+/// Spawns a future on the executor.
+#[cfg_attr(
+	not(any(
+		feature = "alloc-stats",
+		feature = "shell",
+		feature = "net",
+		feature = "virtio-vsock"
+	)),
+	expect(dead_code)
+)]
+pub(crate) fn spawn<F>(future: F)
+where
+	F: Future<Output = ()> + Send + 'static,
+{
+	core_local::ex().spawn(AsyncTask::new(future)).detach();
+}
+
+pub fn init() {
+	#[cfg(feature = "net")]
+	network::init();
+	#[cfg(feature = "virtio-vsock")]
+	vsock::init();
+	#[cfg(feature = "alloc-stats")]
+	alloc_stats::init();
+}
+
+/// Blocks the current thread on `f`, running the executor when idling.
+pub(crate) fn block_on<F, T>(future: F, timeout: Option<Duration>) -> io::Result<T>
+where
+	F: Future<Output = io::Result<T>>,
+{
+	let backoff = Backoff::new();
+	let start = crate::arch::kernel::systemtime::now_micros();
+	let task_notify = Arc::new(TaskNotify::new());
+	let waker = task_notify.clone().into();
+	let mut cx = Context::from_waker(&waker);
+	let mut future = pin!(future);
+
+	loop {
+		// check future
+		let result = future.as_mut().poll(&mut cx);
+
+		// run background all tasks, which poll also the network device
+		run();
+
+		let now = crate::arch::kernel::systemtime::now_micros();
+		if let Poll::Ready(t) = result {
+			return t;
+		}
+
+		if let Some(duration) = timeout
+			&& Duration::from_micros(now - start) >= duration
+		{
+			return Err(Errno::Time);
+		}
+
+		if backoff.is_completed() {
+			// futex_wait_and_set (via TaskNotify::wait) treats the value as a RELATIVE
+			// offset added to get_timer_ticks() (uptime micros). `start`/`now` are
+			// now_micros() = wall-clock micros, so `start + duration` is a wall-clock
+			// ABSOLUTE value and must NOT be passed as a relative offset (that waits
+			// ~uptime-since-epoch micros == effectively forever). Pass the remaining
+			// duration relative to now instead.
+			let wakeup_time = timeout.map(|duration| {
+				let elapsed = now - start;
+				u64::try_from(duration.as_micros())
+					.unwrap()
+					.saturating_sub(elapsed)
+			});
+
+			// Cap the park so we re-poll frequently. block_on parks on its own futex,
+			// independent of the kernel executor's `network_run` task, so while parked
+			// the NIC is never polled: inbound frames arriving mid-park pile up in the
+			// virtio-net RX ring and are dropped before the next wake. With idle-poll
+			// the CPU spins anyway, so a short cap costs little and lets `run()` drain
+			// the device promptly. `None` (indefinite) waits become a bounded spin too.
+			let wakeup_time = Some(match wakeup_time {
+				Some(us) => core::cmp::min(us, 1000),
+				None => 1000,
+			});
+
+			// switch to another task
+			task_notify.wait(wakeup_time);
+
+			// restore default values
+			backoff.reset();
+		} else {
+			backoff.snooze();
+		}
+	}
+}

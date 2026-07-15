@@ -1,0 +1,47 @@
+--- a/kernel/src/fd/socket/udp.rs
++++ b/kernel/src/fd/socket/udp.rs
+@@ -96,11 +96,6 @@
+ 					}
+ 
+ 					if socket.can_recv() {
+-						static __CR: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+-						let __n = __CR.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+-						if __n < 40 || __n % 5000 == 0 {
+-							log::error!("POLL_CANRECV #{}", __n);
+-						}
+ 						avail.insert(
+ 							PollEvent::POLLIN | PollEvent::POLLRDNORM | PollEvent::POLLRDBAND,
+ 						);
+@@ -180,8 +175,6 @@
+ 						match socket.recv_slice(buf) {
+ 							Ok((len, meta)) => {
+ 								if self.remote_endpoint.is_none_or(|ep| ep == meta.endpoint) {
+-									static __AR: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+-									log::error!("APP_RX #{} len={}", __AR.fetch_add(1, core::sync::atomic::Ordering::Relaxed), len);
+ 									Poll::Ready(Ok((len, meta.endpoint)))
+ 								} else {
+ 									socket.register_recv_waker(cx.waker());
+@@ -190,6 +183,14 @@
+ 							}
+ 							_ => Poll::Ready(Err(Errno::Io)),
+ 						}
++					} else if self.nonblocking {
++						// Non-blocking socket with no datagram queued: tokio's
++						// try_io() expects WouldBlock so it can arm readiness and
++						// let the runtime park. Returning Pending here (driven by
++						// block_on(None) at the syscall boundary) would instead
++						// BLOCK the caller in-kernel, spinning network_run and
++						// wedging the tokio runtime (timers never fire).
++						Poll::Ready(Err(Errno::Again))
+ 					} else {
+ 						socket.register_recv_waker(cx.waker());
+ 						Poll::Pending
+@@ -219,6 +220,8 @@
+ 							}
+ 							_ => Poll::Ready(Err(Errno::Io)),
+ 						}
++					} else if self.nonblocking {
++						Poll::Ready(Err(Errno::Again))
+ 					} else {
+ 						socket.register_recv_waker(cx.waker());
+ 						Poll::Pending

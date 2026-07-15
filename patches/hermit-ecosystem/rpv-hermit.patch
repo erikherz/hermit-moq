@@ -1,0 +1,28 @@
+diff -ruN '--exclude=target' rustls-platform-verifier-0.7.0/Cargo.toml /root/iroh-spike/vendor/rpv-hermit/Cargo.toml
+--- rustls-platform-verifier-0.7.0/Cargo.toml	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/rpv-hermit/Cargo.toml	2026-07-12 23:37:32.988925002 +0000
+@@ -145,3 +145,5 @@
+     "Win32_Security_Cryptography",
+ ]
+ default-features = false
++
+diff -ruN '--exclude=target' rustls-platform-verifier-0.7.0/src/verification/mod.rs /root/iroh-spike/vendor/rpv-hermit/src/verification/mod.rs
+--- rustls-platform-verifier-0.7.0/src/verification/mod.rs	2006-07-24 01:21:28.000000000 +0000
++++ /root/iroh-spike/vendor/rpv-hermit/src/verification/mod.rs	2026-07-12 23:37:32.990667195 +0000
+@@ -2,14 +2,14 @@
+ use std::sync::Arc;
+ 
+ #[cfg(all(
+-    any(unix, target_arch = "wasm32"),
++    any(unix, target_arch = "wasm32", target_os = "hermit"),
+     not(target_os = "android"),
+     not(target_vendor = "apple"),
+ ))]
+ mod others;
+ 
+ #[cfg(all(
+-    any(unix, target_arch = "wasm32"),
++    any(unix, target_arch = "wasm32", target_os = "hermit"),
+     not(target_os = "android"),
+     not(target_vendor = "apple"),
+ ))]

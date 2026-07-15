@@ -1,0 +1,13 @@
+# build output
+target/
+**/target/
+
+# editor / agent scratch
+/.claude/
+.DS_Store
+
+# secrets — never commit (Cargo.lock IS committed, for reproducible builds)
+*.env
+.env*
+*.key
+*.jwk

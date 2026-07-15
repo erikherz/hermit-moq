@@ -1,0 +1,228 @@
+diff --git a/tokio/Cargo.toml b/tokio/Cargo.toml
+index 123781bbf..4694931cf 100644
+--- a/tokio/Cargo.toml
++++ b/tokio/Cargo.toml
+@@ -125,6 +125,8 @@ signal-hook-registry = { version = "1.1.1", optional = true }
+ 
+ [target.'cfg(target_os = "wasi")'.dependencies]
+ libc = { version = "0.2.168", optional = true }
++[target.'cfg(target_os = "hermit")'.dependencies]
++libc = { package = "hermit-abi", version = "0.5" }
+ 
+ [target.'cfg(unix)'.dev-dependencies]
+ libc = { version = "0.2.168" }
+diff --git a/tokio/src/io/async_fd.rs b/tokio/src/io/async_fd.rs
+index 285579e1a..da871c997 100644
+--- a/tokio/src/io/async_fd.rs
++++ b/tokio/src/io/async_fd.rs
+@@ -2,11 +2,17 @@ use crate::io::{Interest, Ready};
+ use crate::runtime::io::{ReadyEvent, Registration};
+ use crate::runtime::scheduler;
+ 
++#[cfg(target_os = "hermit")]
++use mio::hermit::SourceFd;
++#[cfg(unix)]
+ use mio::unix::SourceFd;
+ use std::error::Error;
+ use std::fmt;
+ use std::io;
+-use std::os::unix::io::{AsRawFd, RawFd};
++#[cfg(target_os = "hermit")]
++use std::os::hermit::io::{AsFd, AsRawFd, BorrowedFd, RawFd};
++#[cfg(unix)]
++use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, RawFd};
+ use std::task::{ready, Context, Poll};
+ 
+ /// Associates an IO object backed by a Unix file descriptor with the tokio
+@@ -930,9 +936,9 @@ impl<T: AsRawFd> AsRawFd for AsyncFd<T> {
+     }
+ }
+ 
+-impl<T: AsRawFd> std::os::unix::io::AsFd for AsyncFd<T> {
+-    fn as_fd(&self) -> std::os::unix::io::BorrowedFd<'_> {
+-        unsafe { std::os::unix::io::BorrowedFd::borrow_raw(self.as_raw_fd()) }
++impl<T: AsRawFd> AsFd for AsyncFd<T> {
++    fn as_fd(&self) -> BorrowedFd<'_> {
++        unsafe { BorrowedFd::borrow_raw(self.as_raw_fd()) }
+     }
+ }
+ 
+diff --git a/tokio/src/io/mod.rs b/tokio/src/io/mod.rs
+index 01316854f..2c598e4c5 100644
+--- a/tokio/src/io/mod.rs
++++ b/tokio/src/io/mod.rs
+@@ -252,7 +252,7 @@ cfg_aio! {
+     }
+ }
+ 
+-cfg_net_unix! {
++cfg_net_unix_hermit! {
+     mod async_fd;
+ 
+     pub mod unix {
+diff --git a/tokio/src/macros/cfg.rs b/tokio/src/macros/cfg.rs
+index efbd163c7..e6bd44c44 100644
+--- a/tokio/src/macros/cfg.rs
++++ b/tokio/src/macros/cfg.rs
+@@ -51,8 +51,8 @@ macro_rules! cfg_windows {
+ macro_rules! cfg_unix {
+     ($($item:item)*) => {
+         $(
+-            #[cfg(any(all(doc, docsrs), unix))]
+-            #[cfg_attr(docsrs, doc(cfg(unix)))]
++            #[cfg(any(all(doc, docsrs), any(unix, target_os = "hermit")))]
++            #[cfg_attr(docsrs, doc(cfg(any(unix, target_os = "hermit"))))]
+             $item
+         )*
+     }
+@@ -63,7 +63,7 @@ macro_rules! cfg_unix {
+ macro_rules! cfg_unix_or_wasi {
+     ($($item:item)*) => {
+         $(
+-            #[cfg(any(all(doc, docsrs), unix, target_os = "wasi"))]
++            #[cfg(any(all(doc, docsrs), unix, target_os = "wasi", target_os = "hermit"))]
+             #[cfg_attr(docsrs, doc(cfg(any(unix, target_os = "wasi"))))]
+             $item
+         )*
+@@ -340,6 +340,16 @@ macro_rules! cfg_net {
+     }
+ }
+ 
++macro_rules! cfg_net_unix_hermit {
++    ($($item:item)*) => {
++        $(
++            #[cfg(all(any(unix, target_os = "hermit"), feature = "net"))]
++            #[cfg_attr(docsrs, doc(cfg(all(any(unix, target_os = "hermit"), feature = "net"))))]
++            $item
++        )*
++    }
++}
++
+ macro_rules! cfg_net_or_uring {
+     ($($item:item)*) => {
+         $(
+diff --git a/tokio/src/net/tcp/listener.rs b/tokio/src/net/tcp/listener.rs
+index 36550d8f2..e9c3a09af 100644
+--- a/tokio/src/net/tcp/listener.rs
++++ b/tokio/src/net/tcp/listener.rs
+@@ -272,9 +272,13 @@ impl TcpListener {
+     /// [`std::net::TcpListener`]: std::net::TcpListener
+     /// [`set_nonblocking`]: fn@std::net::TcpListener::set_nonblocking
+     pub fn into_std(self) -> io::Result<std::net::TcpListener> {
+-        #[cfg(unix)]
++        #[cfg(any(unix, target_os = "hermit"))]
+         {
++            #[cfg(unix)]
+             use std::os::unix::io::{FromRawFd, IntoRawFd};
++            #[cfg(target_os = "hermit")]
++            use std::os::hermit::io::{FromRawFd, IntoRawFd};
++
+             self.io
+                 .into_inner()
+                 .map(IntoRawFd::into_raw_fd)
+@@ -405,10 +409,13 @@ impl fmt::Debug for TcpListener {
+     }
+ }
+ 
+-#[cfg(unix)]
++#[cfg(any(unix, target_os = "hermit"))]
+ mod sys {
+     use super::TcpListener;
++    #[cfg(unix)]
+     use std::os::unix::prelude::*;
++    #[cfg(target_os = "hermit")]
++    use std::os::hermit::io::{AsFd, AsRawFd, BorrowedFd, RawFd};
+ 
+     impl AsRawFd for TcpListener {
+         fn as_raw_fd(&self) -> RawFd {
+diff --git a/tokio/src/net/tcp/socket.rs b/tokio/src/net/tcp/socket.rs
+index 56faa37d2..9cfc4651c 100644
+--- a/tokio/src/net/tcp/socket.rs
++++ b/tokio/src/net/tcp/socket.rs
+@@ -627,6 +627,7 @@ impl TcpSocket {
+     #[cfg(not(any(
+         target_os = "fuchsia",
+         target_os = "redox",
++        target_os = "hermit",
+         target_os = "solaris",
+         target_os = "illumos",
+         target_os = "haiku",
+@@ -637,6 +638,7 @@ impl TcpSocket {
+         doc(cfg(not(any(
+             target_os = "fuchsia",
+             target_os = "redox",
++            target_os = "hermit",
+             target_os = "solaris",
+             target_os = "illumos",
+             target_os = "haiku",
+@@ -692,6 +694,7 @@ impl TcpSocket {
+         target_os = "fuchsia",
+         target_os = "redox",
+         target_os = "solaris",
++        target_os = "hermit",
+         target_os = "illumos",
+         target_os = "haiku",
+         target_os = "wasi",
+@@ -701,6 +704,7 @@ impl TcpSocket {
+         doc(cfg(not(any(
+             target_os = "fuchsia",
+             target_os = "redox",
++            target_os = "hermit",
+             target_os = "solaris",
+             target_os = "illumos",
+             target_os = "haiku",
+@@ -991,7 +995,7 @@ impl fmt::Debug for TcpSocket {
+ 
+ // These trait implementations can't be build on Windows, so we completely
+ // ignore them, even when building documentation.
+-#[cfg(any(unix, target_os = "wasi"))]
++#[cfg(any(unix, target_os = "wasi", target_os = "hermit"))]
+ cfg_unix_or_wasi! {
+     impl AsRawFd for TcpSocket {
+         fn as_raw_fd(&self) -> RawFd {
+diff --git a/tokio/src/net/tcp/stream.rs b/tokio/src/net/tcp/stream.rs
+index fd051b7bc..22197643b 100644
+--- a/tokio/src/net/tcp/stream.rs
++++ b/tokio/src/net/tcp/stream.rs
+@@ -255,9 +255,12 @@ impl TcpStream {
+     /// [`std::net::TcpStream`]: std::net::TcpStream
+     /// [`set_nonblocking`]: fn@std::net::TcpStream::set_nonblocking
+     pub fn into_std(self) -> io::Result<std::net::TcpStream> {
+-        #[cfg(unix)]
++        #[cfg(any(unix, target_os = "hermit"))]
+         {
++            #[cfg(unix)]
+             use std::os::unix::io::{FromRawFd, IntoRawFd};
++            #[cfg(target_os = "hermit")]
++            use std::os::hermit::io::{FromRawFd, IntoRawFd};
+             self.io
+                 .into_inner()
+                 .map(IntoRawFd::into_raw_fd)
+@@ -1530,10 +1533,13 @@ impl AsRef<Self> for TcpStream {
+     }
+ }
+ 
+-#[cfg(unix)]
++#[cfg(any(unix, target_os = "hermit"))]
+ mod sys {
+     use super::TcpStream;
++    #[cfg(unix)]
+     use std::os::unix::prelude::*;
++    #[cfg(target_os = "hermit")]
++    use std::os::hermit::io::{AsFd, AsRawFd, BorrowedFd, RawFd};
+ 
+     impl AsRawFd for TcpStream {
+         fn as_raw_fd(&self) -> RawFd {
+diff --git a/tokio/src/runtime/io/driver.rs b/tokio/src/runtime/io/driver.rs
+index ab7c931df..5d1ee31c9 100644
+--- a/tokio/src/runtime/io/driver.rs
++++ b/tokio/src/runtime/io/driver.rs
+@@ -77,7 +77,7 @@ pub(crate) struct ReadyEvent {
+     pub(super) is_shutdown: bool,
+ }
+ 
+-cfg_net_unix!(
++cfg_net_unix_hermit!(
+     impl ReadyEvent {
+         pub(crate) fn with_ready(&self, ready: Ready) -> Self {
+             Self {

@@ -1,0 +1,27 @@
+--- a/kernel/src/executor/network.rs
++++ b/kernel/src/executor/network.rs
+@@ -259,15 +259,15 @@
+ 		let now = now();
+ 
+ 		let __pr = nic.poll_common(now);
+-		{
+-			static __NP: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+-			let __n = __NP.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+-			if __n < 20 || __n % 2000 == 0 {
+-				log::error!("NET_POLL #{} result={:?}", __n, __pr);
+-			}
+-		}
+-		if __pr == PollResult::SocketStateChanged || cfg!(feature = "idle-poll") {
+-			// Progress was made or we want to poll when idle.
++		// Two-executor fix: do NOT unconditionally self-wake under idle-poll. On a
++		// single core that makes network_run perpetually ready, so once the tokio main
++		// task yields into futex_wait the scheduler keeps running network_run and
++		// starves the main task -> tokio process() stops (~6s) while the kernel executor
++		// runs on. Only self-wake when real progress was made; otherwise go idle
++		// (register waker + poll-delay timer) so the main task gets the core. Inbound
++		// frames still wake us via the NIC interrupt / poll-delay timer.
++		if __pr == PollResult::SocketStateChanged {
++			// Progress was made.
+ 			cx.waker().wake_by_ref();
+ 		} else {
+ 			// Very likely no progress can be made, so set up a timer interrupt to wake the waker
