@@ -91,6 +91,16 @@ repos:
 - **Apps / players** — how people *actually watch and publish*: **moqplay**, **wallflower**, and
   **vivoh.earth** are viewer/broadcaster applications that consume a TinyMoQ (or any MoQ) endpoint.
   These are separate products, not part of the relay.
+- **Watch-by-pubkey federation** — a discovery-and-provisioning layer that sits *above* the relay. A
+  broadcast is named by an Ed25519 key minted in the browser; to publish, that browser signs a
+  [pkarr](https://github.com/pubky/pkarr) (BEP44) record and puts it on the public **Mainline DHT**,
+  keyed by the key and pointing at the origin relay's own iroh endpoint. To watch, another browser
+  resolves that key off the DHT — **no directory server, no shared database**; the records are
+  self-authenticating (only the key-holder can write under its key). Provisioning the relays
+  themselves (assign an origin, assign an iroh-pulling edge) is a *separate* concern and runs either
+  *brokered* (the app calls TinyMoQ's Worker, which brokers a fleet box and stays content-blind) or
+  *direct* (the app calls its own box). This relay core just moves bytes and does its own
+  peer discovery; naming, cross-fleet discovery, and provisioning all live in the layer above it.
 
 Open-sourcing this core does **not** open-source the product layers above — that line is drawn
 deliberately (see *Scope* below).
@@ -114,8 +124,12 @@ left in the kernel patches (see the capstone notes). `UPSTREAM.md` tracks that p
 
 ## License
 
-Dual **Apache-2.0 OR MIT** (the Rust-ecosystem norm, matching most upstreams this derives from) — see
-[`LICENSE-APACHE`](LICENSE-APACHE) and [`LICENSE-MIT`](LICENSE-MIT). Each vendored crate under
-`vendor/` and `hermit-rs/` retains **its own** upstream license. **Note:** `vendor/ring-hermit`
-derives from [ring](https://github.com/briansmith/ring), which is **not** MIT/Apache — see
-[`REVIEW-NEEDED.md`](REVIEW-NEEDED.md) before publishing.
+This project's **own** code is dual **Apache-2.0 OR MIT** (the Rust-ecosystem norm, matching most
+upstreams this derives from) — see [`LICENSE-APACHE`](LICENSE-APACHE) and [`LICENSE-MIT`](LICENSE-MIT).
+
+Each **vendored** crate under `vendor/` and `hermit-rs/` retains **its own** upstream license; the
+repo license does not (and cannot) relicense them. In particular, `vendor/ring-hermit` derives from
+[ring](https://github.com/briansmith/ring), whose ISC/OpenSSL/BoringSSL-derived terms are **not**
+Apache/MIT. Those terms are permissive — source and binary redistribution is allowed — and `ring` is
+redistributed here **with its own license and notices intact**; it simply cannot be relicensed under
+this repo's Apache/MIT. Keep each vendored crate's `LICENSE*` files in place when redistributing.
