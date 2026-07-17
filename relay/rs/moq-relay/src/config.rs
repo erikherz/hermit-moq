@@ -95,7 +95,12 @@ impl Config {
 					config.client.tls.disable_verify = Some(true);
 				}
 			}
-			config.auth.public = Some(crate::auth::PublicConfig::Simple(vec!["".to_string()]));
+			// `Simple` is kept as a back-compat convenience (also used by the tests);
+			// the detailed form is preferred elsewhere.
+			#[allow(deprecated)]
+			{
+				config.auth.public = Some(crate::auth::PublicConfig::Simple(vec!["".to_string()]));
+			}
 			#[cfg(feature = "iroh")]
 			{
 				config.iroh.enabled = Some(true);

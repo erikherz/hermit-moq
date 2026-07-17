@@ -920,6 +920,8 @@ impl Auth {
 	/// JWT `kid`, and the `mtls` flag are all query params on the base URL — never
 	/// path segments — so client-controlled values are percent-encoded by
 	/// `query_pairs_mut` and can't retarget the path/query.
+	// Called by the non-hermit HTTP auth-API path (feature-gated); dead in this build.
+	#[allow(dead_code)]
 	fn auth_api_url(base: &url::Url, path: &str, kid: Option<&str>, mtls: bool) -> url::Url {
 		let mut url = base.clone();
 		{

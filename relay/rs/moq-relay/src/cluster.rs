@@ -31,6 +31,8 @@ const STALE_AFTER: Duration = Duration::from_secs(60);
 /// list is still fresh (per the response's `Cache-Control`), so this is the floor
 /// on responsiveness, not on origin load: a tighter `max-age` means more of these
 /// ticks turn into real conditional GETs.
+// Used by the non-hermit http(s) cluster-connect-API poll (feature-gated); dead in this build.
+#[allow(dead_code)]
 const CONNECT_API_POLL_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Mesh tiebreaker for gossip-discovered peers. In a full mesh both peers

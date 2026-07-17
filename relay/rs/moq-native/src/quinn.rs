@@ -1,6 +1,9 @@
 use crate::client::ClientConfig;
 use crate::server::{ServerConfig, ServerId};
-use crate::tls::{FingerprintVerifier, ServeCerts};
+use crate::tls::ServeCerts;
+// FingerprintVerifier is only used by the non-hermit `http://` bootstrap path below.
+#[cfg(not(target_os = "hermit"))]
+use crate::tls::FingerprintVerifier;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::{net, time};
@@ -121,6 +124,8 @@ pub(crate) struct QuinnClient {
 	pub quic: quinn::Endpoint,
 	pub transport: Arc<quinn::TransportConfig>,
 	/// Whether an `http://` URL may bootstrap a pin (see [crate::tls::Client::allows_http_bootstrap]).
+	// Read only in the non-hermit `http://` bootstrap path below; dead on the hermit target.
+	#[cfg_attr(target_os = "hermit", allow(dead_code))]
 	pub http_bootstrap: bool,
 	pub versions: moq_net::Versions,
 }

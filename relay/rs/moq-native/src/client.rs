@@ -93,6 +93,8 @@ impl Default for ClientConfig {
 #[derive(Clone)]
 pub struct Client {
 	moq: moq_net::Client,
+	// Read only by the tcp/unix/websocket connect paths; dead when those features are off.
+	#[allow(dead_code)]
 	versions: moq_net::Versions,
 	backoff: Backoff,
 	#[cfg(feature = "websocket")]
