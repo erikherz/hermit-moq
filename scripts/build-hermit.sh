@@ -17,13 +17,16 @@ source "$HOME/.cargo/env" 2>/dev/null || true
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$HERE/relay"
 
-rustup component add rust-src --toolchain nightly >/dev/null 2>&1 || \
-  echo "note: could not auto-add rust-src; run: rustup component add rust-src --toolchain nightly"
+# Toolchain (nightly + rust-src + the hermit target) is pinned in rust-toolchain.toml,
+# so plain `cargo` here resolves to that exact nightly. rustup auto-installs the
+# pinned components on first use.
+rustup component add rust-src >/dev/null 2>&1 || \
+  echo "note: could not auto-add rust-src; run: rustup component add rust-src"
 
 export RUSTFLAGS="-C target-feature=+crt-static -C relocation-model=pic --cfg tokio_unstable"
 
-echo "== building moq-relay -> x86_64-unknown-hermit (nightly, -Zbuild-std) =="
-cargo +nightly build --release --target x86_64-unknown-hermit -Zbuild-std=std,panic_abort \
+echo "== building moq-relay -> x86_64-unknown-hermit (pinned nightly, -Zbuild-std) =="
+cargo build --release --target x86_64-unknown-hermit -Zbuild-std=std,panic_abort \
   -p moq-relay --no-default-features --features quinn,iroh
 
 BIN="$HERE/relay/target/x86_64-unknown-hermit/release/moq-relay"

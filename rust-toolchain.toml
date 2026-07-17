@@ -1,0 +1,11 @@
+# Pinned toolchain for the reproducible clean-clone build.
+#
+# The unikernel build uses `-Zbuild-std`, which *requires* nightly. Pinning an
+# exact nightly makes `scripts/build-hermit.sh` reproducible and insulates the
+# build from nightly drift (e.g. lints being promoted to hard errors). This is
+# the last nightly the tree was verified to build + boot against.
+[toolchain]
+channel = "nightly-2026-07-16"
+components = ["rust-src"]
+profile = "minimal"
+targets = ["x86_64-unknown-hermit"]
