@@ -24,6 +24,54 @@ built with the `fs` feature (required for uhyve file-mapping). See `relay/build_
 
 ---
 
+## Community-benefit view — what each contribution does, why TinyMoQ needs it, why upstreaming helps
+
+**Tally: ~11 discrete contributions across 5 upstream targets.** 1 is ship-ready today
+(`moq-asym-auth`), 6 are 🟡 rebase-and-go (3 HermitOS-kernel fixes + 3 moq-rs features), 3 are
+foundation-crate hermit-target arms (socket2 / tokio / ring), and 1 is the large 🔴 iroh-ecosystem
+port that needs n0 coordination. uhyve needs **nothing** (already upstream ≥ 0.9.1).
+
+### HermitOS — `hermit-os/kernel` · **3 PRs**
+
+| Item | Function | How TinyMoQ depends on it | Community benefit of upstreaming |
+|---|---|---|---|
+| **UDP recv honors `O_NONBLOCK`** 🟡 ⭐ (`0002`) | Non-blocking UDP `recvfrom`/`read` returns `EAGAIN` immediately instead of parking in-kernel when no datagram is ready | **The linchpin.** Without it iroh/quinn's non-blocking `try_io()` recv blocks inside the guest and freezes the tokio runtime mid-handshake — no relay boots in Hermit at all | A POSIX-conformance correctness fix for **any** async UDP workload on Hermit (mio, tokio, DNS, QUIC) — not MoQ/iroh-specific. Single most reusable fix in the tree |
+| **`network_run` conditional self-wake** 🟡 (`0001`) | Network executor self-wakes only on real socket progress; otherwise registers waker + poll-delay timer and yields the core | On a single core the old unconditional self-wake starved userspace tokio after a few seconds — long-lived relay sessions die (heartbeats/timers stop) | Fair two-executor scheduling for any single-core Hermit guest running kernel-net + a userspace async runtime; broad CPU-efficiency win |
+| **block-on timer fix** 🟡 (`0003`) | Companion fix on the same `block_on`/executor-fairness path (timer wakeups) | Part of the three-fix set that stabilizes sustained relay sessions | Completes correctness of Hermit's async `block_on` timer behavior |
+
+### iroh — `n0-computer/iroh` (+ dep shims) · **1 coordinated port (~6 crates)** 🔴
+
+| Item | Function | How TinyMoQ depends on it | Community benefit of upstreaming |
+|---|---|---|---|
+| **iroh QUIC stack → `x86_64-unknown-hermit`** 🔴 | `cfg(target_os="hermit")` arms across iroh (quinn+magicsock endpoint driver), `noq-udp` (async UDP carrying magicsock **and** the Mainline-DHT datapath), `netdev`, `netwatch`, `rustls-platform-verifier`, `iroh-dns`. The one runtime-logic change is the endpoint driver: a quinn-idiomatic single recv-cycle + conditional self-wake | The entire transport plane. This is what lets iroh run inside the unikernel at all — relay↔relay federation **and** the no-DNS DHT discovery the cross-fleet pull rests on | First unikernel port of iroh — a template for the whole n0 ecosystem targeting constrained/no-libc hosts, plus a DNS-less discovery datapath. Largest surface; must de-fork the name-forked `noq*` into real feature-gated support |
+
+### moq-rs — `kixelated/moq` (the moq.dev / IETF reference relay) · **3 PRs** 🟡
+
+| Item | Function | How TinyMoQ depends on it | Community benefit of upstreaming |
+|---|---|---|---|
+| **iroh `external_addr` + no-DNS DHT bootstrap env** 🟡 | Two env knobs on the iroh endpoint builder (no-ops when unset): `MOQ_IROH_EXTERNAL_ADDR` (advertise a reachable addr for a NAT'd origin) and `MOQ_IROH_DHT_BOOTSTRAP` (mainline-DHT discovery instead of `*.dns.iroh.link`) | Exactly how a NAT'd fleet origin publishes a dialable address into the DHT and how edges find it without DNS — the mechanism behind the cross-fleet cross-owner pull | Native relay↔relay federation for NAT'd / DNS-less deployments — useful on Linux too, not only unikernels |
+| **cluster-connect by iroh `EndpointId`** 🟡 | `cluster.connect = iroh://<endpoint-id>/` — an edge dials an origin by identity (resolved via discovery/DHT) rather than `host:port` | The discovery-plane/transport-plane split — the whole "dial video by node id" design; edges pull origins they have no routable hostname for | Gives moq-rs self-authenticating identity-based federation, decoupling routing from DNS/host addressing (browser↔edge hop unchanged) |
+| **Hermit BYOK inline-JWT auth** 🟡 | `cfg(hermit)`-gated auth path: verify inline `?jwt=` with `moq-asym-auth` when a verify key is file-mapped, map claims to `moq_token::Claims`; read `/certs/upstream` for cluster pull | Per-stream BYOK token verification on the box **without** the default resolver's crypto stack (which doesn't build on hermit) — TinyMoQ's multi-tenant auth | A portable, dependency-light auth path for constrained relay targets; zero effect off-hermit |
+
+### New crate → crates.io · **1** 🟢 (ready now)
+
+| Item | Function | How TinyMoQ depends on it | Community benefit of upstreaming |
+|---|---|---|---|
+| **`moq-asym-auth`** 🟢 | Pure-Rust multi-alg JWT **verifier** (HS256 + Ed25519 + ES256/P-256), no `ring`/`aws-lc`, so it cross-compiles anywhere | The verifier the Hermit relay (BYOK auth) uses; the verify-only token model on every box rests on it | Anyone needing JWT verification where `ring`/`aws-lc` won't build (unikernels, embedded, constrained targets) — useful well beyond MoQ. Publishable as-is |
+
+### Rust foundations — hermit-target arms · **3 PRs** 🟡 (dependencies)
+
+| Item | Function | How TinyMoQ depends on it | Community benefit of upstreaming |
+|---|---|---|---|
+| **socket2 — hermit target** 🟡 (`rust-lang/socket2`) | `target_os="hermit"` socket arms alongside unix/wasi (+258, largest single patch) | quinn/magicsock and most of the async net stack sit on socket2; nothing builds for hermit without it | Foundational hermit support benefiting **every** async-net crate that depends on socket2 |
+| **tokio — hermit runtime** 🟡 (`tokio-rs/tokio`) | `cfg`-gated hermit support (current-thread, `enable_all`, mio poll selector), `--cfg tokio_unstable` | The relay's async runtime — no tokio-on-hermit, no relay | Brings the dominant Rust async runtime to Hermit for everyone |
+| **ring — hermit build** 🟡 ⚠️ (`briansmith/ring`) | `build.rs` tweak so ring compiles for hermit (+4) | Pulled in by the TLS path; small but needed to build today | Hermit build support — **but** ring is under its own OpenSSL/ISC-derived terms: flag for legal review and evaluate rustls/`aws-lc-rs` alternatives. Lowest-priority / caveated |
+
+### uhyve — `hermit-os/uhyve` · **0** ✅ nothing to upstream
+Directory `--file-mapping` is already in stock uhyve ≥ 0.9.1 — just require that version.
+
+---
+
 ## 1. socket2 — hermit target support
 `socket2-0.6.4` → hermit. Foundational: quinn/magicsock and much of the async net stack sit on
 socket2. The largest single patch (+258). **PR:** add `target_os = "hermit"` arms alongside the
