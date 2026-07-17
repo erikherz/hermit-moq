@@ -14,14 +14,23 @@ fork's monorepo layout and do **not** apply to upstream).
 |---|---|---|---|---|
 | 1 | UDP recv honor `O_NONBLOCK` ⭐ | `src/fd/socket/udp.rs` | clean 2-hunk add (`else if self.nonblocking`) — verified `git apply --check` OK | ✅ **PR-ready** (pending harness re-verify) — see `pr1-udp-nonblock/` |
 | 2 | `network_run` self-wake under `idle-poll` | `src/executor/network.rs` | one-line: drop `\|\| cfg!(feature = "idle-poll")` from the poll condition (main already has the timer else-branch) | ⚠️ expressible cleanly, but it **changes deliberate `idle-poll` behavior** → open as a discussion issue, not a drop-in bugfix |
-| 3 | `block_on` timeout units | `src/executor/mod.rs` | main still computes `wakeup_time = start + duration` and passes it to `task_notify.wait()` | ⚠️ **likely a live bug** if `wait()` treats its arg as a *relative* offset — must verify `TaskNotify::wait` / `futex_wait_and_set` semantics before asserting |
+| 3 | `block_on` timeout units | `src/executor/mod.rs` | clean 1-hunk fix — verified `git apply --check` OK | ✅ **CONFIRMED live bug + PR-ready** (pending harness re-verify) — see `pr2-blockon-timeout/` |
+
+### #3 verification (done)
+
+`TaskNotify::wait` → `futex_wait_and_set(…, Flags::RELATIVE, …)`; with `RELATIVE`,
+`futex_wait_and_set` computes `deadline = get_timer_ticks() + arg`. `block_on` passes
+`start + duration` where `start = now_micros()` is **absolute**, so the deadline is inflated by
+`start` — timed waits sleep ~`uptime + timeout`. `wait()` has a single caller (this `block_on`;
+`TaskNotify` is private), so the fix is local. `None`-timeout callers are unaffected. Full chain
+in `pr2-blockon-timeout/ISSUE.md`.
 
 ## Recommended order
 
 1. **#1 only, first** — clean, self-evident, POSIX-conformance bugfix with a reproducer. Best
    first contribution; earns trust before the subtler runtime-fairness changes.
-2. **#3** — verify the `wait()` relative-vs-absolute semantics; if confirmed, it's a strong
-   standalone bugfix (affects every `block_on` timeout caller).
+2. **#3** — ✅ verified: a real relative-vs-absolute bug affecting every `block_on` timeout caller.
+   Strong standalone bugfix; open once #1 has broken the ice.
 3. **#2** — raise as a design discussion (it alters an intentional feature's behavior).
 
 ## Before opening any of these

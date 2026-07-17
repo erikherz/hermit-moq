@@ -1,0 +1,24 @@
+--- a/src/executor/mod.rs
++++ b/src/executor/mod.rs
+@@ -162,8 +162,19 @@
+ 		}
+ 
+ 		if backoff.is_completed() {
+-			let wakeup_time =
+-				timeout.map(|duration| start + u64::try_from(duration.as_micros()).unwrap());
++			// `TaskNotify::wait` forwards this to `futex_wait_and_set` with
++			// `Flags::RELATIVE`, i.e. the value is added to `get_timer_ticks()` as an
++			// offset from now. `start` is `now_micros()` — an absolute timestamp — so
++			// `start + duration` is absolute and must NOT be passed as a relative
++			// offset: that inflates the wait by ~`start`, so timed waits sleep far
++			// longer than requested (unboundedly, with uptime). Pass the remaining
++			// duration relative to now instead.
++			let wakeup_time = timeout.map(|duration| {
++				let elapsed = now - start;
++				u64::try_from(duration.as_micros())
++					.unwrap()
++					.saturating_sub(elapsed)
++			});
+ 
+ 			// switch to another task
+ 			task_notify.wait(wakeup_time);
