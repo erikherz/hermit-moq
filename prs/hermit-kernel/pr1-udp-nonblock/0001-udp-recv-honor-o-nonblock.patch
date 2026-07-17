@@ -1,0 +1,27 @@
+--- a/src/fd/socket/udp.rs
++++ b/src/fd/socket/udp.rs
+@@ -170,6 +170,14 @@
+ 							}
+ 							_ => Poll::Ready(Err(Errno::Io)),
+ 						}
++					} else if self.nonblocking {
++						// A non-blocking socket with no datagram queued must report
++						// `EAGAIN` so a caller doing a non-blocking `try_io()` recv
++						// (e.g. tokio/mio) can arm readiness and park. Returning
++						// `Pending` here instead blocks the caller in-kernel via the
++						// syscall boundary's `block_on(None)`, which spins `network_run`
++						// and wedges the userspace runtime (its timers stop firing).
++						Poll::Ready(Err(Errno::Again))
+ 					} else {
+ 						socket.register_recv_waker(cx.waker());
+ 						Poll::Pending
+@@ -199,6 +207,9 @@
+ 							}
+ 							_ => Poll::Ready(Err(Errno::Io)),
+ 						}
++					} else if self.nonblocking {
++						// See `recvfrom`: EAGAIN, not Pending, for a non-blocking socket.
++						Poll::Ready(Err(Errno::Again))
+ 					} else {
+ 						socket.register_recv_waker(cx.waker());
+ 						Poll::Pending
